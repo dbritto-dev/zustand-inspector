@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zustand Inspector demo</title>
+    <style>
+      :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+      :root[data-theme='dark'] { background: #0f1012; color: #e7e9ec; }
+      :root[data-theme='light'] { background: #fafafa; color: #1d2025; }
+      body { margin: 0; }
+      #app { max-width: 720px; margin: 0 auto; padding: 24px 16px 60vh; }
+      h1 { margin: 0 0 4px; font-size: 22px; }
+      h2 { font-size: 15px; margin: 0 0 8px; }
+      .lead { margin: 0 0 16px; opacity: .75; }
+      section { border: 1px solid #8884; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+      button, input { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid #8886; background: transparent; color: inherit; }
+      button { cursor: pointer; }
+      output { min-width: 40px; text-align: center; font: 600 20px ui-monospace, monospace; }
+      #step { width: 64px; }
+      ul { margin: 0; padding-left: 4px; list-style: none; }
+      small { font-weight: 400; opacity: .6; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

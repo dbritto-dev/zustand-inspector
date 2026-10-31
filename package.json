@@ -1,0 +1,62 @@
+{
+  "name": "zustand-inspector",
+  "version": "0.1.0",
+  "description": "Framework-agnostic Zustand devtools for TanStack Devtools: lossless time travel, action log, diffs, redaction. No React required.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Danilo Britto (https://github.com/dbritto-dev)",
+  "keywords": [
+    "zustand",
+    "devtools",
+    "tanstack",
+    "tanstack-devtools",
+    "time-travel",
+    "state-management",
+    "vanilla"
+  ],
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./panel": {
+      "types": "./dist/types/panel/index.d.ts",
+      "import": "./dist/panel.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "build:demo": "vite build --mode demo",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@tanstack/devtools-event-client": "^0.5.1"
+  },
+  "peerDependencies": {
+    "@tanstack/devtools": ">=0.16.0 <0.17.0",
+    "zustand": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@tanstack/devtools": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@tanstack/devtools": "^0.16.0",
+    "@types/node": "^26.6.6",
+    "jsdom": "^30.1.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5",
+    "zustand": "^5.0.16"
+  }
+}
