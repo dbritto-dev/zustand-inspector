@@ -1,0 +1,92 @@
+<meta charset="utf-8">
+<title>Zustand Inspector Playground</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: compact app strip on top (steps + three store cards), TanStack Devtools docked below like in a real project. */
+  :root {
+    --bg: #f5f6f2;
+    --surface: #ffffff;
+    --fg: #1d221f;
+    --muted: #5d665f;
+    --line: #d9ddd5;
+    --accent: #2f6b4f;
+    --accent-soft: #e2efe7;
+    --chip: #eef0ea;
+    --display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+    --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121513; --surface: #1a1e1b; --fg: #e6ebe7; --muted: #9aa49d; --line: #2c322e;
+      --accent: #7fd3a6; --accent-soft: #1f3329; --chip: #232925; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121513; --surface: #1a1e1b; --fg: #e6ebe7; --muted: #9aa49d; --line: #2c322e;
+    --accent: #7fd3a6; --accent-soft: #1f3329; --chip: #232925; color-scheme: dark;
+  }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--body); }
+  .wrap {
+    max-width: 1080px; margin: 0 auto;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 20px 56vh;
+    display: grid; gap: 16px;
+  }
+  header { display: grid; gap: 4px; }
+  h1 { margin: 0; font: 700 26px/1.15 var(--display); letter-spacing: -0.01em; text-wrap: balance; }
+  .lead { margin: 0; color: var(--muted); max-width: 68ch; }
+  .lead code { font-family: var(--mono); font-size: 13px; color: var(--fg); }
+  .steps { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; counter-reset: step; }
+  .steps li {
+    counter-increment: step; display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px 6px 6px; border-radius: 999px; background: var(--chip); font-size: 13px;
+  }
+  .steps li::before {
+    content: counter(step); display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--accent); color: var(--surface); font: 500 12px var(--mono);
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
+    display: grid; gap: 10px; align-content: start; min-width: 0;
+  }
+  .card h2 { margin: 0; font: 500 15px var(--display); display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .card h2 small { font: 400 12px var(--mono); color: var(--muted); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button, input {
+    font: inherit; font-size: 14px; color: var(--fg); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 7px; padding: 5px 11px;
+  }
+  button { cursor: pointer; }
+  button:hover { background: var(--accent-soft); border-color: var(--accent); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  output { min-width: 48px; text-align: center; font: 500 26px var(--mono); font-variant-numeric: tabular-nums; }
+  #step { width: 64px; }
+  #title { flex: 1 1 140px; min-width: 0; }
+  ul.todos { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 14px; }
+  ul.todos label { display: flex; gap: 8px; align-items: center; }
+  .tags { font: 12px var(--mono); color: var(--muted); }
+  .pill { font: 500 12px var(--mono); padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+  .card[data-mode="light"] .pill { background: var(--chip); color: var(--muted); }
+  .note { margin: 0; font-size: 13px; color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<div class="wrap">
+  <header>
+    <h1>Zustand Inspector Playground</h1>
+    <p class="lead">Three <code>zustand/vanilla</code> stores, no React, inspected inside TanStack Devtools. Everything below the cards is the real plugin.</p>
+  </header>
+  <ol class="steps" aria-label="Try this">
+    <li>Click + a few times</li>
+    <li>Load async todos</li>
+    <li>Open the Diff tab on an action</li>
+    <li>Jump back with ⤺ or the slider</li>
+  </ol>
+  <div id="app" class="grid"></div>
+</div>
+<script type="module" src="./main.ts"></script>

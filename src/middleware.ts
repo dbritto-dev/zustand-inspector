@@ -92,10 +92,12 @@ const IGNORED_CALLERS = new Set([
 /** Best-effort caller name from the stack (V8, SpiderMonkey and JavaScriptCore formats). */
 export function inferCallerName(stack: string | undefined, skipUntil = 'namedSet'): string | undefined {
   if (!stack) return undefined
-  const lines = stack.split('\n')
-  const at = lines.findIndex((line) => line.includes(skipUntil))
-  if (at === -1) return undefined
-  const line = lines[at + 1]
+  // Keep only frame lines (drops V8's "Error" header). The stack is created
+  // inside `namedSet`, so frame 0 is ours and frame 1 is the caller. Matching by
+  // name is preferred, but minifiers rename `namedSet`, so fall back to position.
+  const frames = stack.split('\n').filter((l) => /^\s*at\s/.test(l) || /@/.test(l))
+  const at = frames.findIndex((line) => line.includes(skipUntil))
+  const line = frames[at === -1 ? 1 : at + 1]
   if (!line) return undefined
   const v8 = /^\s*at\s+(?:async\s+)?([^\s(]+)/.exec(line)
   const other = /^\s*([^@\s]*)@/.exec(line)

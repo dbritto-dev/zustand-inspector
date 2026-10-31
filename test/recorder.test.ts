@@ -226,5 +226,8 @@ describe('inferCallerName', () => {
     expect(inferCallerName(v8)).toBe('increment')
     expect(inferCallerName(ff)).toBe('increment')
     expect(inferCallerName('Error\n    at namedSet (x)\n    at http://localhost/app.js:1:1')).toBeUndefined()
+    // minified: our frame is renamed, the caller is still the next frame
+    const minified = 'Error\n    at o (index.js:1:100)\n    at Object.increment (index.js:1:900)'
+    expect(inferCallerName(minified)).toBe('increment')
   })
 })
