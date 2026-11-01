@@ -1,4 +1,5 @@
 import type { StateCreator, StoreApi, StoreMutatorIdentifier } from 'zustand/vanilla'
+import { connectPersist, detectMiddlewares, persistApiOf, type PersistConnection } from './integrations/persist'
 import { StoreRecorder, type RecorderOptions } from './recorder'
 
 export type Action = string | { type: string; [key: string]: unknown }
@@ -93,6 +94,13 @@ const IGNORED_CALLERS = new Set([
   'Object',
 ])
 
+/**
+ * Frames from Zustand itself or another installed package: middlewares such as
+ * `persist` and `immer` wrap `set`, so the caller that names the action is the
+ * first frame above them. Covers node_modules paths and Vite's prebundled deps.
+ */
+const LIBRARY_FRAME = /[\\/]node_modules[\\/]|[\\/]\.vite[\\/]deps[\\/]/
+
 /** Best-effort caller name from the stack (V8, SpiderMonkey and JavaScriptCore formats). */
 export function inferCallerName(stack: string | undefined, skipUntil = 'namedSet'): string | undefined {
   if (!stack) return undefined
@@ -101,7 +109,9 @@ export function inferCallerName(stack: string | undefined, skipUntil = 'namedSet
   // name is preferred, but minifiers rename `namedSet`, so fall back to position.
   const frames = stack.split('\n').filter((l) => /^\s*at\s/.test(l) || /@/.test(l))
   const at = frames.findIndex((line) => line.includes(skipUntil))
-  const line = frames[at === -1 ? 1 : at + 1]
+  let index = at === -1 ? 1 : at + 1
+  while (index < frames.length && LIBRARY_FRAME.test(frames[index]!)) index++
+  const line = frames[index]
   if (!line) return undefined
   const v8 = /^\s*at\s+(?:async\s+)?([^\s(]+)/.exec(line)
   const other = /^\s*([^@\s]*)@/.exec(line)
@@ -134,11 +144,20 @@ const inspectorImpl =
     }
 
     let recorder: StoreRecorder<any> | undefined
+    let persist: PersistConnection | undefined
+    let inSet = 0
 
     // Named so `inferCallerName` can find the frame right above it.
     // Count listeners so each action can report how many it notified.
     let listenerCount = 0
     const subscribe = api.subscribe
+    // Changes that bypass `namedSet`: a middleware applied *outside* the inspector
+    // (persist(inspector(…))) writes with the raw `set`. Record them anyway.
+    // Subscribed before the wrapper below, so it isn't counted as a listener.
+    subscribe(() => {
+      if (inSet > 0 || !recorder || recorder.isSilent) return
+      recorder.record(persistApiOf(api) ? 'persist/rehydrate' : 'setState (outside inspector)')
+    })
     api.subscribe = (listener) => {
       listenerCount++
       const unsubscribe = subscribe(listener)
@@ -153,15 +172,23 @@ const inspectorImpl =
     }
 
     function namedSet(partial: any, replace?: any, action?: Action) {
+      // persist's rehydration writes through this `set` with no action name.
+      const hydrating = action === undefined && persist?.hydrating === true
       const stack =
-        action === undefined && options.inferActionName !== false ? new Error().stack : undefined
+        action === undefined && !hydrating && options.inferActionName !== false ? new Error().stack : undefined
       const before = get()
       const start = now()
-      // Zustand runs its listeners synchronously inside set(), so this times them too.
-      const result = (set as any)(partial, replace)
+      inSet++
+      let result: unknown
+      try {
+        // Zustand runs its listeners synchronously inside set(), so this times them too.
+        result = (set as any)(partial, replace)
+      } finally {
+        inSet--
+      }
       const end = now()
       if (recorder && !recorder.isSilent) {
-        const { name, payload } = resolveAction(action, options, stack)
+        const { name, payload } = hydrating ? { name: 'persist/rehydrate', payload: undefined } : resolveAction(action, options, stack)
         const listeners = Object.is(before, get()) ? 0 : listenerCount
         recorder.record(name, payload, 'app', { start, end, listeners })
       }
@@ -176,7 +203,26 @@ const inspectorImpl =
       initialState,
       options,
     )
-    ;(api as any).inspector = { recorder, dispose: () => recorder?.dispose() }
+    const connect = () => {
+      if (!recorder || persist) return
+      const persistApi = persistApiOf(api)
+      if (persistApi) persist = connectPersist(persistApi, recorder, api)
+      else {
+        const others = detectMiddlewares(api)
+        if (Object.keys(others).length > 0) recorder.setMiddlewares(others)
+      }
+    }
+    connect()
+    // A middleware applied outside the inspector attaches its api after this
+    // creator returns (persist(inspector(…))): look again once creation is done.
+    queueMicrotask(connect)
+    ;(api as any).inspector = {
+      recorder,
+      dispose: () => {
+        persist?.dispose()
+        recorder?.dispose()
+      },
+    }
     return initialState
   }
 
@@ -209,11 +255,19 @@ export function inspectStore<T>(
     store.getState(),
     options,
   )
+  const persistApi = persistApiOf(store)
+  const persist = persistApi ? connectPersist(persistApi, recorder, store) : undefined
+  if (!persist) {
+    const others = detectMiddlewares(store)
+    if (Object.keys(others).length > 0) recorder.setMiddlewares(others)
+  }
   const unsubscribe = store.subscribe(() => {
-    if (!recorder.isSilent) recorder.record(options.anonymousActionType ?? 'setState')
+    if (recorder.isSilent) return
+    recorder.record(persist?.hydrating ? 'persist/rehydrate' : (options.anonymousActionType ?? 'setState'))
   })
   return () => {
     unsubscribe()
+    persist?.dispose()
     recorder.dispose()
   }
 }

@@ -1,3 +1,4 @@
+import { persist } from 'zustand/middleware'
 import { createStore } from 'zustand/vanilla'
 import { inspectStore, inspector } from '../src'
 
@@ -103,6 +104,10 @@ export const todosStore = createStore<TodosState>()(
   ),
 )
 
-// A store created without the middleware can still be inspected (no action names).
-export const themeStore = createStore<{ mode: 'light' | 'dark' }>()(() => ({ mode: 'dark' }))
+// A store created without the inspector middleware can still be inspected (no
+// action names). It uses `persist`, which the inspector picks up: the mode
+// survives a reload and rehydration is recorded as `persist/rehydrate`.
+export const themeStore = createStore<{ mode: 'light' | 'dark' }>()(
+  persist(() => ({ mode: 'dark' as 'light' | 'dark' }), { name: 'zustand-inspector-playground:theme' }),
+)
 inspectStore(themeStore, { name: 'theme' })

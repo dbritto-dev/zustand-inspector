@@ -112,6 +112,22 @@ Notes:
 - Path history comes from the per-action diffs, so it can miss changes in an action that changed more than 200 values (the panel says so).
 - `inspectStore()` stores record states but can't be timed, because their actions call `set` directly.
 
+### Zustand's built-in middlewares
+
+Put `inspector` outermost, the same place Zustand's docs put `devtools`:
+
+```ts
+createStore<State>()(inspector(persist(immer((set) => ({ … })), { name: 'cart' }), { name: 'cart' }))
+```
+
+- **`persist`.** A "persist" button in the toolbar opens the store's storage. It shows the key, the version, whether the store has hydrated, which keys `partialize` keeps, and the stored value. It also says whether storage matches the current state, and if not, what differs. Buttons rehydrate from storage or clear it, and both are in the toolbar's menu too. Rehydration is recorded as `persist/rehydrate`, including with `skipHydration` and async storage. A stored version that differs from the store's version is flagged, because `migrate` will run on the next rehydrate.
+- **`immer`, `redux`, `subscribeWithSelector`, `combine`.** These work unchanged. Names are still inferred through the `persist` and `immer` wrappers, and `redux` actions keep their `type` and payload from `dispatch`. Listener counts include `subscribeWithSelector` subscriptions.
+- **`devtools`.** It can sit on the same store; the toolbar marks stores that have it, and `redux` stores are marked too.
+- **Order mistakes are caught.** If a middleware wraps the inspector (`persist(inspector(…))`), its own writes skip `inspector`'s `set`. The inspector still records them, as `persist/rehydrate` or `setState (outside inspector)`, and still finds `persist`.
+- **`inspectStore`** connects `persist` the same way.
+
+Name inference skips frames from `node_modules` and Vite's prebundled deps, which is what dev servers serve. In a build that bundles Zustand into the same file as your code, pass action names explicitly when using `persist` or `immer`.
+
 For a store you can't wrap (for example a third-party one), use `inspectStore`. It records every change as `setState` and still supports time travel:
 
 ```ts

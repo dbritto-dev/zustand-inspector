@@ -5,6 +5,7 @@ import type {
   ActionSource,
   Command,
   InspectorEvents,
+  MiddlewareInfo,
   SessionExport,
   StoreInfo,
 } from './protocol'
@@ -86,6 +87,8 @@ export class StoreRecorder<T> {
   #lastSerialized: unknown
   #disposers: Array<() => void> = []
   #disposed = false
+  #middlewares: MiddlewareInfo | undefined
+  #commandHandlers = new Map<string, (command: Command) => void>()
 
   constructor(target: RecorderTarget<T>, initialState: T, options: RecorderOptions) {
     this.name = options.name
@@ -201,7 +204,38 @@ export class StoreRecorder<T> {
       case 'export':
         this.#send('export', { ...envelope(), storeId: this.storeId, data: this.exportSession() })
         return
+      default:
+        // Commands for integrations (persist…), registered by the middleware.
+        this.#commandHandlers.get(command.type)?.(command)
     }
+  }
+
+  /** Handle commands the recorder doesn't know itself, such as `persist:rehydrate`. */
+  onCommand(type: Command['type'], handler: (command: Command) => void): () => void {
+    this.#commandHandlers.set(type, handler)
+    return () => {
+      if (this.#commandHandlers.get(type) === handler) this.#commandHandlers.delete(type)
+    }
+  }
+
+  get middlewares(): MiddlewareInfo | undefined {
+    return this.#middlewares
+  }
+
+  /** Describe the store's other middlewares; the panel is told right away. */
+  setMiddlewares(middlewares: MiddlewareInfo): void {
+    this.#middlewares = middlewares
+    this.#send('middlewares', { ...envelope(), storeId: this.storeId, middlewares })
+  }
+
+  /** Send an integration's reply to the panel, with this store's id and the session envelope. */
+  sendPersisted(value: Omit<InspectorEvents['persisted'], 'v' | 'session' | 'storeId'>): void {
+    this.#send('persisted', { ...envelope(), storeId: this.storeId, ...value })
+  }
+
+  /** Serialize a value with this store's options (redaction included). */
+  serializeValue(value: unknown): unknown {
+    return this.#serializeValue(value)
   }
 
   /** Time travel: restore the exact original object recorded for `id`. */
@@ -285,6 +319,7 @@ export class StoreRecorder<T> {
       dropped: this.#dropped,
       actions: this.actions,
       state: this.#serialize(this.#liveState()),
+      ...(this.#middlewares ? { middlewares: this.#middlewares } : {}),
     }
   }
 

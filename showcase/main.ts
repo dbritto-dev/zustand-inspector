@@ -35,7 +35,7 @@ app.innerHTML = /* html */ `
       <button data-action="theme">Toggle mode</button>
       <span class="pill" id="mode"></span>
     </div>
-    <p class="note">A store created without the middleware. Changes are recorded as setState, and time travel still works.</p>
+    <p class="note">A store created without the inspector middleware, with <code>persist</code>: the mode survives a reload. Open "persist" in the panel to see the storage.</p>
   </section>
 `
 

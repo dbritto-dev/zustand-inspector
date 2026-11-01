@@ -107,6 +107,20 @@ export function mountAstryxInspector(
   }
   window.addEventListener('keydown', onKeyDown, true)
 
+  // TanStack Devtools closes the whole pane on Escape (a window listener). When
+  // Escape is meant for one of the panel's overlays (a dialog, menu or drawer),
+  // keep it inside: check before the overlay closes, stop it on the way out.
+  const escapes = new WeakSet<Event>()
+  const OVERLAY = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], dialog[open]'
+  const markEscape = (e: Event) => {
+    if ((e as KeyboardEvent).key === 'Escape' && shadow.querySelector(OVERLAY)) escapes.add(e)
+  }
+  const keepEscape = (e: Event) => {
+    if (escapes.has(e)) e.stopPropagation()
+  }
+  shadow.addEventListener('keydown', markEscape, true)
+  shadowHost.addEventListener('keydown', keepEscape)
+
   return {
     model,
     setMode(next) {
@@ -119,6 +133,8 @@ export function mountAstryxInspector(
       mounted = false
       observer?.disconnect()
       window.removeEventListener('keydown', onKeyDown, true)
+      shadow.removeEventListener('keydown', markEscape, true)
+      shadowHost.removeEventListener('keydown', keepEscape)
       root.unmount()
       model.dispose()
       shadowHost.remove()

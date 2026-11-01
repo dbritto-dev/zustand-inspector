@@ -59,6 +59,37 @@ export interface ActionMeta {
   branch?: { fromId: number; count: number }
 }
 
+/** Zustand's `persist` middleware on a store, as seen from the page. */
+export interface PersistInfo {
+  /** The storage key (persist's `name` option). */
+  name: string
+  version: number
+  hydrated: boolean
+  /** `skipHydration: true`: the app calls `rehydrate()` itself. */
+  skipHydration?: boolean
+  /** Top-level keys that persist writes, after `partialize` (functions left out). */
+  keys?: Array<string>
+}
+
+/** Other middlewares the inspector recognised on the store. */
+export interface MiddlewareInfo {
+  persist?: PersistInfo
+  /** `redux` middleware: actions come from `dispatch`. */
+  redux?: boolean
+  /** Redux DevTools `devtools` middleware is on the store as well. */
+  devtools?: boolean
+}
+
+/** What persist's storage holds for a store, read on request. */
+export interface PersistedValue {
+  /** `null` when nothing is stored under the key. */
+  stored: { state: Serialized; version?: number } | null
+  /** The current state after `partialize`, to compare with what is stored. */
+  current: Serialized
+  /** Reading or parsing the storage failed. */
+  error?: string
+}
+
 export interface StoreInfo {
   storeId: string
   name: string
@@ -69,6 +100,7 @@ export interface StoreInfo {
   dropped: number
   actions: Array<ActionMeta>
   state: Serialized
+  middlewares?: MiddlewareInfo
 }
 
 export type Command =
@@ -80,6 +112,9 @@ export type Command =
   | { type: 'import'; state: Serialized }
   | { type: 'snapshot'; id: number }
   | { type: 'export' }
+  | { type: 'persist:rehydrate' }
+  | { type: 'persist:clear' }
+  | { type: 'persist:read' }
 
 export interface SessionExport {
   format: 'zustand-inspector-session'
@@ -118,6 +153,8 @@ export type InspectorEvents = {
   export: Envelope & { storeId: string; data: SessionExport }
   /** page → panel: store was disposed. */
   removed: Envelope & { storeId: string }
+  middlewares: Envelope & { storeId: string; middlewares: MiddlewareInfo }
+  persisted: Envelope & { storeId: string } & PersistedValue
   /** panel → page: a command for one store. */
   command: Envelope & { storeId: string; command: Command }
 }

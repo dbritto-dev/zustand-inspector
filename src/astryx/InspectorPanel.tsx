@@ -28,7 +28,7 @@ import { Tooltip } from '@astryxdesign/core/Tooltip'
 import { Section } from '@astryxdesign/core/Section'
 import { Banner } from '@astryxdesign/core/Banner'
 import { ToggleButton, ToggleButtonGroup } from '@astryxdesign/core/ToggleButton'
-import { ChevronDown, ChevronRight, CircleDot, SkipBack, StepBack, StepForward, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, CircleDot, HardDrive, Hourglass, RefreshCw, SkipBack, StepBack, StepForward, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import { formatPath } from '../diff'
@@ -56,7 +56,7 @@ import {
 } from '../analysis'
 import { snapshotKey, type CostFilter, type PanelModel, type PanelStoreData, type PanelTab } from '../model'
 import { formatDelta, formatTime } from '../panel/format'
-import type { ActionMeta, Change } from '../protocol'
+import type { ActionMeta, Change, PersistInfo } from '../protocol'
 import { childrenOf, describe, isFunctionValue, KeyValue, kindOf, summarize, ValueText } from './Value'
 
 /*
@@ -197,6 +197,8 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
   const filter = useStore(model.store, (s) => s.filter)
   const showFunctions = useStore(model.store, (s) => s.showFunctions)
   const [importOpen, setImportOpen] = useState(false)
+  const [persistOpen, setPersistOpen] = useState(false)
+  const persist = data.middlewares?.persist
   const status = statusOf(data)
   const currentSize = data.actions.find((a) => a.id === data.currentId)?.cost?.stateSize
 
@@ -251,6 +253,28 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
                 </Text>
               </Tooltip>
             ) : null}
+            {persist ? (
+              <Button
+                label="persist"
+                size="sm"
+                variant="ghost"
+                isIconOnly={compact}
+                icon={<Icon icon={persist.hydrated ? HardDrive : Hourglass} />}
+                tooltip={persistSummary(persist)}
+                onClick={() => setPersistOpen(true)}
+              />
+            ) : null}
+            {data.middlewares?.redux && !compact ? (
+              <Token label="redux" size="sm" color="gray" description="Actions come from the redux middleware's dispatch" />
+            ) : null}
+            {data.middlewares?.devtools && !compact ? (
+              <Token
+                label="devtools"
+                size="sm"
+                color="gray"
+                description="Redux DevTools' devtools middleware is on this store too"
+              />
+            ) : null}
           </>
         }
         endContent={
@@ -291,6 +315,21 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
                   description: 'Load state from an exported file',
                   onClick: () => setImportOpen(true),
                 },
+                ...(persist
+                  ? [
+                      { type: 'divider' as const },
+                      {
+                        label: 'Persisted storage…',
+                        description: `What persist keeps under "${persist.name}"`,
+                        onClick: () => setPersistOpen(true),
+                      },
+                      {
+                        label: 'Rehydrate from storage',
+                        description: 'Load the stored state into the store again',
+                        onClick: () => model.command({ type: 'persist:rehydrate' }),
+                      },
+                    ]
+                  : []),
               ]}
             />
           </>
@@ -303,7 +342,168 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
       ) : null}
       <Scrubber model={model} data={data} compact={compact} />
       <ImportDialog model={model} storeName={data.name} isOpen={importOpen} onOpenChange={setImportOpen} />
+      {persist ? (
+        <PersistDialog model={model} data={data} persist={persist} isOpen={persistOpen} onOpenChange={setPersistOpen} />
+      ) : null}
     </VStack>
+  )
+}
+
+function persistSummary(persist: PersistInfo): string {
+  if (persist.hydrated) return `persist: hydrated from "${persist.name}" (version ${persist.version}). Open storage.`
+  if (persist.skipHydration) return `persist: not hydrated yet. skipHydration is on, so the app calls rehydrate().`
+  return `persist: hydrating from "${persist.name}"…`
+}
+
+function PersistDialog({
+  model,
+  data,
+  persist,
+  isOpen,
+  onOpenChange,
+}: {
+  model: PanelModel
+  data: PanelStoreData
+  persist: PersistInfo
+  isOpen: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const persisted = useStore(model.store, (s) => s.persisted[data.storeId])
+  // Read the storage whenever the dialog opens, and again after every action:
+  // persist writes on each set, so what's stored follows the store.
+  useEffect(() => {
+    if (isOpen) model.command({ type: 'persist:read' })
+  }, [isOpen, model, data.currentId])
+  const drift = useMemo(
+    () => (persisted?.stored ? rangeDiff(persisted.current, persisted.stored.state) : null),
+    [persisted],
+  )
+  const storedItems = useMemo(
+    () => (persisted?.stored && kindOf(persisted.stored.state) !== 'leaf' ? toTreeItems(persisted.stored.state, [], false, 0) : []),
+    [persisted],
+  )
+  const hydration = persist.hydrated
+    ? { variant: 'success' as const, label: 'Hydrated' }
+    : persist.skipHydration
+      ? { variant: 'warning' as const, label: 'Not hydrated yet: skipHydration is on, so the app calls rehydrate()' }
+      : { variant: 'accent' as const, label: 'Hydrating…' }
+  const storedVersion = persisted?.stored?.version
+
+  return (
+    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={560}>
+      <Layout
+        header={
+          <DialogHeader
+            title="Persisted storage"
+            subtitle={`persist middleware on the "${data.name}" store`}
+            onOpenChange={onOpenChange}
+          />
+        }
+        content={
+          <LayoutContent>
+            <VStack gap={4}>
+              <MetadataList label={{ width: 132 }}>
+                <MetadataListItem label="Storage key">
+                  <Text type="code">{persist.name}</Text>
+                </MetadataListItem>
+                <MetadataListItem label="Version">
+                  <Text hasTabularNumbers>{persist.version}</Text>
+                </MetadataListItem>
+                <MetadataListItem label="Hydration">
+                  <HStack gap={1.5} vAlign="center">
+                    <StatusDot variant={hydration.variant} label={hydration.label} />
+                    <Text>{hydration.label}</Text>
+                  </HStack>
+                </MetadataListItem>
+                <MetadataListItem label="Persisted keys">
+                  <Text type="code">{persist.keys ? persist.keys.join(', ') || 'none' : 'unknown'}</Text>
+                </MetadataListItem>
+              </MetadataList>
+
+              <Section variant="muted" padding={3}>
+                <VStack gap={2}>
+                  <Text weight="semibold">Stored value</Text>
+                  {!persisted ? (
+                    <Text color="secondary">Reading storage…</Text>
+                  ) : persisted.error ? (
+                    <Banner status="error" title="Couldn't read the storage" description={persisted.error} />
+                  ) : !persisted.stored ? (
+                    <Text color="secondary">Nothing is stored under "{persist.name}".</Text>
+                  ) : (
+                    <>
+                      {drift && drift.changes.length === 0 ? (
+                        <HStack gap={1.5} vAlign="center">
+                          <StatusDot variant="success" label="In sync" />
+                          <Text>Matches the current state.</Text>
+                        </HStack>
+                      ) : drift ? (
+                        <VStack gap={1}>
+                          <HStack gap={1.5} vAlign="center">
+                            <StatusDot variant="warning" label="Out of sync" />
+                            <Text>
+                              Differs from the current state in {drift.changes.length} place
+                              {drift.changes.length === 1 ? '' : 's'} (current → stored):
+                            </Text>
+                          </HStack>
+                          <List density="compact" edge="flush">
+                            {drift.changes.slice(0, 8).map((change, i) => (
+                              <ListItem
+                                key={`${formatPath(change.path)}-${i}`}
+                                label={
+                                  <Text type="code" weight="semibold" maxLines={1}>
+                                    {formatPath(change.path)}
+                                  </Text>
+                                }
+                                description={<ChangeValues change={change} />}
+                              />
+                            ))}
+                          </List>
+                        </VStack>
+                      ) : null}
+                      {storedVersion !== undefined && storedVersion !== persist.version ? (
+                        <Text type="supporting">
+                          Stored with version {storedVersion}; the store is on version {persist.version}, so migrate
+                          runs on the next rehydrate.
+                        </Text>
+                      ) : null}
+                      {storedItems.length > 0 ? (
+                        <TreeList key={persisted.readAt} density="compact" items={storedItems} />
+                      ) : (
+                        <ValueText value={persisted.stored.state} />
+                      )}
+                    </>
+                  )}
+                </VStack>
+              </Section>
+
+              <HStack gap={2} justify="end" wrap="wrap">
+                <Button
+                  label="Refresh"
+                  size="sm"
+                  variant="ghost"
+                  icon={<Icon icon={RefreshCw} />}
+                  onClick={() => model.command({ type: 'persist:read' })}
+                />
+                <Button
+                  label="Clear storage"
+                  size="sm"
+                  variant="destructive"
+                  tooltip="Remove the stored value. The store keeps its current state until it is saved again."
+                  onClick={() => model.command({ type: 'persist:clear' })}
+                />
+                <Button
+                  label="Rehydrate"
+                  size="sm"
+                  variant="primary"
+                  tooltip="Load the stored value into the store, as on page load"
+                  onClick={() => model.command({ type: 'persist:rehydrate' })}
+                />
+              </HStack>
+            </VStack>
+          </LayoutContent>
+        }
+      />
+    </Dialog>
   )
 }
 
