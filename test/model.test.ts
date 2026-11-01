@@ -117,6 +117,30 @@ describe('createPanelModel', () => {
     model.dispose()
   })
 
+  it('picks the initial and final states in compare mode', () => {
+    const { transport, store } = setup()
+    store.getState().inc()
+    store.getState().inc()
+    const model = createPanelModel(transport)
+    const [init, , second] = model.store.getState().stores.counter.actions
+    model.startCompare()
+    expect(model.store.getState()).toMatchObject({ comparePick: 'from', compareFrom: null })
+    model.pickCompare(init.id)
+    expect(model.store.getState()).toMatchObject({ comparePick: 'to', compareFrom: init.id })
+    model.pickCompare(init.id) // the same action cannot be both ends
+    expect(model.store.getState().comparePick).toBe('to')
+    model.pickCompare(second.id)
+    expect(model.store.getState()).toMatchObject({
+      comparePick: null,
+      compareFrom: init.id,
+      selectedAction: second.id,
+      tab: 'diff',
+    })
+    model.clearCompare()
+    expect(model.store.getState()).toMatchObject({ comparePick: null, compareFrom: null })
+    model.dispose()
+  })
+
   it('keeps path pins per store', () => {
     const { transport } = setup()
     const model = createPanelModel(transport)

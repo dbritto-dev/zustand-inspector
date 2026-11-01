@@ -44,6 +44,8 @@ export interface PanelState {
   pinnedPath: Path | null
   /** Range comparison: diff from this action to the selected one. */
   compareFrom: number | null
+  /** Compare mode: which end of the comparison the next click picks. */
+  comparePick: 'from' | 'to' | null
   costFilter: CostFilter
   /** Search inside the state tree (keys and values). */
   stateSearch: string
@@ -63,6 +65,10 @@ export interface PanelModel {
   /** Select `id` and compare it with the action selected before (shift-click). */
   selectRange(id: number): void
   clearCompare(): void
+  /** Enter compare mode: the next click picks the initial state, the one after it the final state. */
+  startCompare(): void
+  /** Use `id` for the end of the comparison being picked. */
+  pickCompare(id: number): void
   setCostFilter(filter: CostFilter): void
   setStateSearch(query: string): void
   /** Ask the page for a snapshot once; returns it when already known. */
@@ -89,6 +95,7 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
     selectedPath: null,
     pinnedPath: null,
     compareFrom: null,
+    comparePick: null,
     costFilter: 'all',
     stateSearch: '',
   }))
@@ -144,10 +151,9 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
         order: isNew ? [...s.order, info.storeId] : s.order,
         selectedStore,
         selectedAction: keepAction ? s.selectedAction : null,
-        compareFrom:
-          selectedStore === info.storeId && s.compareFrom !== null && !info.actions.some((a) => a.id === s.compareFrom)
-            ? null
-            : s.compareFrom,
+        ...(selectedStore === info.storeId && s.compareFrom !== null && !info.actions.some((a) => a.id === s.compareFrom)
+          ? { compareFrom: null, comparePick: null }
+          : {}),
         snapshots,
       }
     })
@@ -170,10 +176,9 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
           !branch || s.selectedStore !== msg.storeId || s.selectedAction === null || s.selectedAction <= branch.fromId
         return {
           selectedAction: keepSelection ? s.selectedAction : null,
-          compareFrom:
-            branch && s.selectedStore === msg.storeId && s.compareFrom !== null && s.compareFrom > branch.fromId
-              ? null
-              : s.compareFrom,
+          ...(branch && s.selectedStore === msg.storeId && s.compareFrom !== null && s.compareFrom > branch.fromId
+            ? { compareFrom: null, comparePick: null }
+            : {}),
           snapshots: { ...s.snapshots, [snapshotKey(msg.storeId, msg.currentId)]: msg.state },
         }
       })
@@ -217,7 +222,7 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
       const { selectedStore } = store.getState()
       if (!selectedStore) return
       if (command.type === 'reset' || command.type === 'commit') {
-        store.setState({ selectedAction: null, compareFrom: null })
+        store.setState({ selectedAction: null, compareFrom: null, comparePick: null })
       }
       send(selectedStore, command)
     },
@@ -229,6 +234,7 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
         selectedPath: null,
         pinnedPath: null,
         compareFrom: null,
+        comparePick: null,
         stateSearch: '',
       })
     },
@@ -237,7 +243,7 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
       const data = s.selectedStore ? s.stores[s.selectedStore] : undefined
       // Selecting the latest action while it is current means "follow live".
       const follow = data && id === data.currentId && id === data.actions.at(-1)?.id
-      store.setState({ selectedAction: follow ? null : id, compareFrom: null })
+      store.setState({ selectedAction: follow ? null : id, compareFrom: null, comparePick: null })
     },
     selectRange(id) {
       const s = store.getState()
@@ -245,10 +251,21 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
       if (!data) return
       const anchor = s.selectedAction ?? data.currentId
       if (anchor === id) return
-      store.setState({ compareFrom: anchor, selectedAction: id, tab: 'diff' })
+      store.setState({ compareFrom: anchor, selectedAction: id, comparePick: null, tab: 'diff' })
     },
     clearCompare() {
-      store.setState({ compareFrom: null })
+      store.setState({ compareFrom: null, comparePick: null })
+    },
+    startCompare() {
+      store.setState({ comparePick: 'from', compareFrom: null })
+    },
+    pickCompare(id) {
+      const s = store.getState()
+      if (s.comparePick === 'from') {
+        store.setState({ compareFrom: id, comparePick: 'to' })
+      } else if (s.comparePick === 'to' && id !== s.compareFrom) {
+        store.setState({ selectedAction: id, comparePick: null, tab: 'diff' })
+      }
     },
     selectPath(selectedPath) {
       store.setState({ selectedPath })

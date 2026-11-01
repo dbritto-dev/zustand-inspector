@@ -26,8 +26,9 @@ import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { FileInput } from '@astryxdesign/core/FileInput'
 import { Tooltip } from '@astryxdesign/core/Tooltip'
 import { Section } from '@astryxdesign/core/Section'
+import { Banner } from '@astryxdesign/core/Banner'
 import { ToggleButton, ToggleButtonGroup } from '@astryxdesign/core/ToggleButton'
-import { Database, GitBranch, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
+import { CircleDot, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import { formatPath } from '../diff'
@@ -98,6 +99,13 @@ export function InspectorPanel({ model, width }: { model: PanelModel; width: num
   }
 
   const onSelect = (id: number, range: boolean) => {
+    const picking = model.store.getState().comparePick
+    if (picking) {
+      model.pickCompare(id)
+      // Open the detail only once both ends of the comparison are chosen.
+      if (!twoRegions && model.store.getState().comparePick === null) setDrawerOpen(true)
+      return
+    }
     if (range) model.selectRange(id)
     else model.selectAction(id)
     if (!twoRegions) setDrawerOpen(true)
@@ -450,8 +458,10 @@ function Timeline({
   const compareFrom = useStore(model.store, (s) => s.compareFrom)
   const costFilter = useStore(model.store, (s) => s.costFilter)
   const pinnedPath = useStore(model.store, (s) => s.pinnedPath)
+  const comparePick = useStore(model.store, (s) => s.comparePick)
   const followRef = useRef<HTMLLIElement>(null)
   const selected = selectedAction ?? data.currentId
+  const ends = compareEnds(data, compareFrom, comparePick === 'to' ? null : selected)
   const currentIndex = data.actions.findIndex((a) => a.id === data.currentId)
   const futureFrom = data.actions[currentIndex + 1]?.id ?? Infinity
   const first = data.actions[0]?.ts ?? 0
@@ -494,6 +504,16 @@ function Timeline({
             tooltip="No value changed, or a new reference held an equal value"
           />
         </ToggleButtonGroup>
+        <ToggleButton
+          label="Compare"
+          size="sm"
+          icon={<Icon icon={GitCompareArrows} />}
+          tooltip="Pick an initial and a final state to diff"
+          isPressed={comparePick !== null}
+          onPressedChange={(pressed) => (pressed ? model.startCompare() : model.clearCompare())}
+        >
+          Compare
+        </ToggleButton>
         {pinnedPath ? (
           <Token
             label={`Pinned ${formatPath(pinnedPath)}`}
@@ -505,6 +525,23 @@ function Timeline({
           />
         ) : null}
       </HStack>
+      {comparePick ? (
+        <HStack paddingInline={3} paddingBlockEnd={2}>
+          <StackItem size="fill">
+            <Banner
+              status="info"
+              icon={<Icon icon={GitCompareArrows} />}
+              title={comparePick === 'from' ? 'Step 1 of 2: pick the initial state' : 'Step 2 of 2: pick the final state'}
+              description={
+                comparePick === 'from'
+                  ? 'Click the action whose state the comparison starts from.'
+                  : `From #${compareFrom} ${data.actions.find((a) => a.id === compareFrom)?.name ?? ''}. Click a second action to compare with it.`
+              }
+              endContent={<Button label="Cancel" size="sm" variant="ghost" onClick={() => model.clearCompare()} />}
+            />
+          </StackItem>
+        </HStack>
+      ) : null}
       {data.dropped > 0 ? (
         <HStack paddingInline={3} paddingBlock={1.5}>
           <Text type="supporting">
@@ -516,15 +553,18 @@ function Timeline({
         {visible.map((action) => {
           const isFuture = action.id >= futureFrom
           const flags = flagsFor(action)
-          const inRange = compareFrom !== null && action.id === compareFrom
+          const end = ends ? (action.id === ends.from ? 'from' : action.id === ends.to ? 'to' : null) : null
+          const between = ends?.to !== undefined && isBetween(data, action.id, ends.from, ends.to)
+          const comparing = comparePick !== null || ends !== null
           return (
             <ListItem
               key={action.id}
               ref={action.id === selected ? followRef : undefined}
-              isSelected={action.id === selected || inRange}
+              isSelected={end !== null || (!comparing && action.id === selected)}
+              data-zi-range={end ?? (between ? 'between' : undefined)}
               onClick={(e) => onSelect(action.id, e.shiftKey)}
               startContent={
-                <Text type="supporting" hasTabularNumbers>
+                <Text type="supporting" hasTabularNumbers color={end || between ? 'accent' : undefined}>
                   #{action.id}
                 </Text>
               }
@@ -535,6 +575,15 @@ function Timeline({
                       {action.name}
                     </Text>
                   </StackItem>
+                  {end ? (
+                    <Token
+                      label={end === 'from' ? 'From' : 'To'}
+                      size="sm"
+                      color="blue"
+                      icon={<Icon icon={end === 'from' ? CircleDot : Flag} size="xsm" />}
+                      description={end === 'from' ? 'Initial state of the comparison' : 'Final state of the comparison'}
+                    />
+                  ) : null}
                   {action.source !== 'app' ? <Token label={action.source} size="sm" color="gray" /> : null}
                   {action.branch ? (
                     <Tooltip content={branchText(action.branch)}>
@@ -582,10 +631,32 @@ function Timeline({
         </HStack>
       ) : null}
       <HStack paddingInline={3} paddingBlock={2}>
-        <Text type="supporting">Shift-click a second action to compare the two states.</Text>
+        <Text type="supporting">To diff two states, use Compare or shift-click a second action.</Text>
       </HStack>
     </VStack>
   )
+}
+
+/**
+ * The ends of a comparison in timeline order: `from` is the earlier state,
+ * `to` the later one (undefined while the final state is still being picked).
+ */
+function compareEnds(
+  data: PanelStoreData,
+  compareFrom: number | null,
+  other: number | null,
+): { from: number; to?: number } | null {
+  if (compareFrom === null) return null
+  if (other === null || other === compareFrom) return { from: compareFrom }
+  const range = rangeEnds(data, compareFrom, other)
+  return range ? { from: range[0].id, to: range[1].id } : { from: compareFrom }
+}
+
+function isBetween(data: PanelStoreData, id: number, from: number, to: number): boolean {
+  const i = data.actions.findIndex((a) => a.id === id)
+  const a = data.actions.findIndex((x) => x.id === from)
+  const b = data.actions.findIndex((x) => x.id === to)
+  return i > a && i < b
 }
 
 function emptyTimelineText(filter: string, costFilter: CostFilter, pinnedPath: Path | null): string {
@@ -607,12 +678,15 @@ function rangeEnds(data: PanelStoreData, a: number, b: number): [ActionMeta, Act
 function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreData; onClose?: () => void }) {
   const selectedAction = useStore(model.store, (s) => s.selectedAction)
   const compareFrom = useStore(model.store, (s) => s.compareFrom)
+  const comparePick = useStore(model.store, (s) => s.comparePick)
   const tab = useStore(model.store, (s) => s.tab)
-  const id = selectedAction ?? data.currentId
+  // While the final state is being picked, show the chosen initial state, not a preview range.
+  const picking = comparePick === 'to' && compareFrom !== null
+  const id = picking ? compareFrom : (selectedAction ?? data.currentId)
   const action = data.actions.find((a) => a.id === id)
   const inDrawer = onClose !== undefined
   const panelId = `zi-detail-${inDrawer ? 'drawer' : 'pane'}`
-  const range = compareFrom !== null ? rangeEnds(data, compareFrom, id) : null
+  const range = compareFrom !== null && !picking ? rangeEnds(data, compareFrom, id) : null
   const rangeChanges = useRangeDiff(model, data, range)
 
   if (!action) {
@@ -626,30 +700,51 @@ function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreD
   const changeCount = range ? (rangeChanges?.changes.length ?? 0) : (action.changes?.length ?? 0)
 
   const title = range ? (
-    <Text type="code" weight="semibold" maxLines={1}>
-      #{range[0].id} → #{range[1].id}
-    </Text>
+    <HStack gap={1.5} vAlign="center">
+      <Token
+        label={`From #${range[0].id} ${range[0].name}`}
+        size="sm"
+        color="blue"
+        icon={<Icon icon={CircleDot} size="xsm" />}
+        description="Initial state of the comparison"
+      />
+      <Text type="code" color="secondary">
+        →
+      </Text>
+      <Token
+        label={`To #${range[1].id} ${range[1].name}`}
+        size="sm"
+        color="blue"
+        icon={<Icon icon={Flag} size="xsm" />}
+        description="Final state of the comparison"
+      />
+    </HStack>
+  ) : picking ? (
+    <HStack gap={1.5} vAlign="center">
+      <Token
+        label={`From #${action.id} ${action.name}`}
+        size="sm"
+        color="blue"
+        icon={<Icon icon={CircleDot} size="xsm" />}
+        description="Initial state of the comparison"
+      />
+      <Text type="supporting">→ pick the final state</Text>
+    </HStack>
   ) : (
     <Text type="code" weight="semibold" maxLines={1}>
       #{action.id} {action.name}
     </Text>
   )
-  const subtitle = range ? (
-    <Token
-      label="Comparing a range"
-      size="sm"
-      color="blue"
-      description="Diff between the two selected states"
-      onRemove={() => model.clearCompare()}
-    />
+  const subtitle = range || picking ? (
+    <Button label="Stop comparing" size="sm" variant="ghost" onClick={() => model.clearCompare()} />
   ) : (
     <Text type="supporting" hasTabularNumbers>
       {formatTime(action.ts)}
     </Text>
   )
-  const current = isCurrent && !range ? <StatusDot variant="success" label="Current state" tooltip="Current state" /> : null
+  const current = isCurrent && !range && !picking ? <StatusDot variant="success" label="Current state" tooltip="Current state" /> : null
   const jump =
-    !isCurrent && !range ? (
+    !isCurrent && !range && !picking ? (
       <Button
         label="Jump here"
         variant="primary"
