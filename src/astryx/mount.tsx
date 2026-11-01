@@ -1,6 +1,7 @@
 import type { DefinedTheme } from '@astryxdesign/core/theme'
 import { neutralTheme } from '@astryxdesign/theme-neutral/built'
 import { createRoot } from 'react-dom/client'
+import type { AsyncConvention } from '../analysis'
 import { createPanelModel, type PanelModel } from '../model'
 import type { Transport } from '../transport'
 import { astryxShadowCss } from './css'
@@ -20,6 +21,12 @@ export interface AstryxInspectorOptions {
   astryxTheme?: { theme: DefinedTheme; css: string }
   /** Load the theme's web font (Figtree for neutral) from Google Fonts. Default false: system fonts. */
   loadFonts?: boolean
+  /**
+   * How async calls are read from action names. Defaults to Redux Toolkit's
+   * phases (`name:pending` → `name:fulfilled` / `name:rejected`); `false` turns
+   * grouping off.
+   */
+  asyncConvention?: AsyncConvention | false
 }
 
 export interface AstryxInspectorHandle {
@@ -72,7 +79,7 @@ export function mountAstryxInspector(
   const render = () =>
     root.render(
       <PanelTheme theme={theme} mode={mode}>
-        <InspectorPanel model={model} width={width} />
+        <InspectorPanel model={model} width={width} asyncConvention={options.asyncConvention} />
       </PanelTheme>,
     )
   render()

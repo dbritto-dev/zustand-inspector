@@ -92,6 +92,20 @@ The Astryx panel answers the two questions a state log usually can't.
   The Slow and Wasted filters show only those actions. The toolbar shows the current state size.
 - **Functions.** With the Functions switch on, a store's functions appear next to their keys with their parameters, for example `setStep: (step) => {…}` or `load: async () => {…}`. Only the parameter list is read from the page, and string default values are replaced with `"…"`.
 - **Chrome Performance panel.** Timed actions also appear on a "Zustand" track, through `console.timeStamp`. Turn it off with `performanceTrack: false`.
+- **Async calls.** Actions named by Redux Toolkit's phase convention collapse into one row per call: `todos/load:pending`, then `todos/load:fulfilled` or `todos/load:rejected` (`/pending` works too). The row shows whether the call is running, fulfilled or rejected, and how long it took. Expand it to see its actions. Click it to diff the whole call, and its Action tab shows the start, the end, the request id and the error. Put a `requestId` in the payload (or in `payload.meta`) so overlapping calls pair exactly. Without one, overlapping calls are paired oldest-first and marked "ambiguous". Grouping only reads names, so nothing is wrapped at runtime. A team with other names passes `asyncConvention: (name, payload) => ({ key, phase, requestId }) | null` to the plugin, or `false` to turn grouping off.
+
+  ```ts
+  load: async () => {
+    const requestId = crypto.randomUUID()
+    set({ status: 'loading' }, false, { type: 'todos/load:pending', requestId })
+    try {
+      const todos = await api.todos()
+      set({ todos, status: 'ready' }, false, { type: 'todos/load:fulfilled', requestId })
+    } catch (error) {
+      set({ status: 'error' }, false, { type: 'todos/load:rejected', requestId, error })
+    }
+  },
+  ```
 - **History branches.** Changing state while viewing the past discards the actions after that state, like undo/redo. The new action shows "from #N".
 
 Notes:
@@ -154,7 +168,7 @@ Ideas borrowed (see the research report):
 ## Limitations and next steps
 
 - No skip or reorder of actions. These need recomputation from reducers, which a `set()`-based store doesn't have.
-- Async actions show as separate rows. Next step: Pinia-style `groupId`s so `load:pending → load:fulfilled` collapse into one row.
+- The plain DOM panel shows async calls as separate rows; grouping is in the Astryx panel.
 - Not yet: editing state from the panel, a subscriber/selector view, go-to-source, agent (MCP) tools.
 - State editing from the panel, a "why did this subscriber run" view, and go-to-source for actions (from the stack trace) aren't built yet.
 - Other hosts: a Redux DevTools adapter (so existing users keep their workflow), a WXT browser extension, Rozenite (React Native), and command endpoints that MCP-based coding agents can call.

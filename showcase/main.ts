@@ -21,12 +21,13 @@ app.innerHTML = /* html */ `
     <form id="add" class="row"><input id="title" placeholder="New todo" aria-label="New todo" /><button>Add</button></form>
     <div class="row">
       <button data-action="load">Load async</button>
+      <button data-action="load-fail" title="Rejects after 400 ms">Load (fails)</button>
       <button data-action="tag">Add tag</button>
       <button data-action="refresh" title="Copies the todos Map without changing anything">Refresh</button>
       <span class="tags" id="tags"></span>
     </div>
     <ul class="todos" id="todos"></ul>
-    <p class="note">Map, Set and Date state; session.accessToken is redacted. "Refresh" copies the Map without changing it.</p>
+    <p class="note">Map, Set and Date state; session.accessToken is redacted. "Load" is async: its pending and fulfilled or rejected actions group into one row.</p>
   </section>
   <section class="card" id="theme-card">
     <h2>Theme <small>inspectStore()</small></h2>
@@ -86,6 +87,7 @@ app.addEventListener('click', (e) => {
   if (action === 'inc') counterStore.getState().increment()
   if (action === 'dec') counterStore.getState().decrement()
   if (action === 'load') void todosStore.getState().load()
+  if (action === 'load-fail') void todosStore.getState().load(true)
   if (action === 'tag') todosStore.getState().tag(`tag-${++tagCount}`)
   if (action === 'slow') counterStore.getState().incrementSlow()
   if (action === 'refresh') todosStore.getState().refresh()

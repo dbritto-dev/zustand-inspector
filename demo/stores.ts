@@ -33,17 +33,19 @@ export type Todo = { id: string; title: string; done: boolean; createdAt: Date }
 export type TodosState = {
   todos: Map<string, Todo>
   tags: Set<string>
-  status: 'idle' | 'loading' | 'ready'
+  status: 'idle' | 'loading' | 'ready' | 'error'
   session: { user: string; accessToken: string }
   add: (title: string) => void
   toggle: (id: string) => void
   tag: (tag: string) => void
   /** Copies the Map without changing anything: a wasted update on purpose. */
   refresh: () => void
-  load: () => Promise<void>
+  /** Async: recorded as todos/load:pending, then :fulfilled or :rejected (pass `fail`). */
+  load: (fail?: boolean) => Promise<void>
 }
 
 let nextId = 1
+let nextRequest = 1
 
 export const todosStore = createStore<TodosState>()(
   inspector(
@@ -78,15 +80,23 @@ export const todosStore = createStore<TodosState>()(
         ),
       tag: (tag) => set((s) => ({ tags: new Set(s.tags).add(tag) }), false, 'tags/add'),
       refresh: () => set((s) => ({ todos: new Map(s.todos) }), false, 'todos/refresh'),
-      load: async () => {
-        set({ status: 'loading' }, false, 'todos/load:pending')
+      // Async calls follow Redux Toolkit's phase names, so the panel groups them.
+      // The requestId pairs the phases when two loads overlap.
+      load: async (fail = false) => {
+        const requestId = String(nextRequest++)
+        set({ status: 'loading' }, false, { type: 'todos/load:pending', requestId })
         await new Promise((r) => setTimeout(r, 400))
+        if (fail) {
+          const error = new Error('Network request failed')
+          set({ status: 'error' }, false, { type: 'todos/load:rejected', requestId, error })
+          return
+        }
         const todos = new Map(get().todos)
         for (const title of ['Read the TanStack plugin docs', 'Ship the Zustand inspector']) {
           const id = String(nextId++)
           todos.set(id, { id, title, done: false, createdAt: new Date() })
         }
-        set({ todos, status: 'ready' }, false, 'todos/load:fulfilled')
+        set({ todos, status: 'ready' }, false, { type: 'todos/load:fulfilled', requestId })
       },
     }),
     { name: 'todos', maxHistory: 200 },

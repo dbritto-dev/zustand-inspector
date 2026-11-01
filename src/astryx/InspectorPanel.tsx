@@ -28,7 +28,7 @@ import { Tooltip } from '@astryxdesign/core/Tooltip'
 import { Section } from '@astryxdesign/core/Section'
 import { Banner } from '@astryxdesign/core/Banner'
 import { ToggleButton, ToggleButtonGroup } from '@astryxdesign/core/ToggleButton'
-import { CircleDot, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, CircleDot, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import { formatPath } from '../diff'
@@ -44,6 +44,12 @@ import {
   rangeDiff,
   samePath,
   valueAt,
+  asyncError,
+  defaultAsyncConvention,
+  groupAsyncActions,
+  type AsyncConvention,
+  type AsyncGroup,
+  type AsyncGrouping,
   type CostFlag,
   type FlagKind,
   type Path,
@@ -62,7 +68,16 @@ import { childrenOf, describe, isFunctionValue, KeyValue, kindOf, summarize, Val
 const TWO_REGIONS_MIN = 720
 const COMPACT_MAX = 560
 
-export function InspectorPanel({ model, width }: { model: PanelModel; width: number }) {
+export function InspectorPanel({
+  model,
+  width,
+  asyncConvention,
+}: {
+  model: PanelModel
+  width: number
+  /** How async calls are read from action names; `false` turns grouping off. */
+  asyncConvention?: AsyncConvention | false
+}) {
   const data = useStore(model.store, (s) => (s.selectedStore ? s.stores[s.selectedStore] : undefined))
   const twoRegions = width === 0 || width >= TWO_REGIONS_MIN
   const compact = width > 0 && width < COMPACT_MAX
@@ -75,6 +90,14 @@ export function InspectorPanel({ model, width }: { model: PanelModel; width: num
   })
 
   useEffect(() => model.onExport(downloadJson), [model])
+  const actions = data?.actions
+  const grouping = useMemo(
+    () =>
+      actions && asyncConvention !== false
+        ? groupAsyncActions(actions, asyncConvention ?? defaultAsyncConvention)
+        : NO_GROUPS,
+    [actions, asyncConvention],
+  )
   useEffect(() => {
     if (twoRegions) setDrawerOpen(false)
   }, [twoRegions])
@@ -110,7 +133,16 @@ export function InspectorPanel({ model, width }: { model: PanelModel; width: num
     else model.selectAction(id)
     if (!twoRegions) setDrawerOpen(true)
   }
-  const timeline = <Timeline model={model} data={data} onSelect={onSelect} />
+  const onSelectGroup = (group: AsyncGroup) => {
+    // The whole call: from the state before it started to its last action.
+    const index = data.actions.findIndex((a) => a.id === group.start.id)
+    const before = data.actions[index - 1]?.id ?? group.start.id
+    model.selectGroup(group.id, before, (group.end ?? group.start).id)
+    if (!twoRegions) setDrawerOpen(true)
+  }
+  const timeline = (
+    <Timeline model={model} data={data} grouping={grouping} onSelect={onSelect} onSelectGroup={onSelectGroup} />
+  )
 
   return (
     <>
@@ -129,7 +161,7 @@ export function InspectorPanel({ model, width }: { model: PanelModel; width: num
         content={
           twoRegions ? (
             <LayoutContent padding={0} isScrollable={false} label="Action detail">
-              <Detail model={model} data={data} />
+              <Detail model={model} data={data} grouping={grouping} />
             </LayoutContent>
           ) : (
             <LayoutContent padding={0} label="Actions">
@@ -140,7 +172,7 @@ export function InspectorPanel({ model, width }: { model: PanelModel; width: num
       />
       {!twoRegions ? (
         <Drawer isOpen={drawerOpen} onOpenChange={setDrawerOpen} label="Action detail" width="92%">
-          <Detail model={model} data={data} onClose={() => setDrawerOpen(false)} />
+          <Detail model={model} data={data} grouping={grouping} onClose={() => setDrawerOpen(false)} />
         </Drawer>
       ) : null}
     </>
@@ -447,11 +479,15 @@ function FlagToken({ flag }: { flag: CostFlag }) {
 function Timeline({
   model,
   data,
+  grouping,
   onSelect,
+  onSelectGroup,
 }: {
   model: PanelModel
   data: PanelStoreData
+  grouping: AsyncGrouping
   onSelect: (id: number, range: boolean) => void
+  onSelectGroup: (group: AsyncGroup) => void
 }) {
   const filter = useStore(model.store, (s) => s.filter.trim().toLowerCase())
   const selectedAction = useStore(model.store, (s) => s.selectedAction)
@@ -459,14 +495,25 @@ function Timeline({
   const costFilter = useStore(model.store, (s) => s.costFilter)
   const pinnedPath = useStore(model.store, (s) => s.pinnedPath)
   const comparePick = useStore(model.store, (s) => s.comparePick)
+  const selectedGroup = useStore(model.store, (s) => s.selectedGroup)
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
+  const toggleGroup = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   const followRef = useRef<HTMLLIElement>(null)
   const selected = selectedAction ?? data.currentId
   const shiftHeld = useShiftHeld()
   // Holding Shift previews the start of a shift-click comparison: the selected
   // action is tagged From until Shift is released.
-  const ends =
-    compareEnds(data, compareFrom, comparePick === 'to' ? null : selected) ??
-    (shiftHeld && comparePick === null ? { from: selected } : null)
+  // A selected async call is its own kind of range: no From/To tags.
+  const ends = selectedGroup
+    ? null
+    : (compareEnds(data, compareFrom, comparePick === 'to' ? null : selected) ??
+      (shiftHeld && comparePick === null ? { from: selected } : null))
   const currentIndex = data.actions.findIndex((a) => a.id === data.currentId)
   const futureFrom = data.actions[currentIndex + 1]?.id ?? Infinity
   const first = data.actions[0]?.ts ?? 0
@@ -475,12 +522,25 @@ function Timeline({
     () => (pinnedPath ? new Set(actionsTouching(data.actions, pinnedPath).map((a) => a.id)) : null),
     [data.actions, pinnedPath],
   )
-  const visible = data.actions.filter(
-    (a) =>
-      (!filter || a.name.toLowerCase().includes(filter)) &&
-      matchesCost(a, costFilter) &&
-      (!touching || touching.has(a.id) || a.source === 'init'),
-  )
+  const isVisible = (a: ActionMeta) =>
+    (!filter || a.name.toLowerCase().includes(filter)) &&
+    matchesCost(a, costFilter) &&
+    (!touching || touching.has(a.id) || a.source === 'init')
+  // Async calls show as one row at their start; their actions show under it when expanded.
+  const rows: Array<{ group: AsyncGroup } | { action: ActionMeta; member?: AsyncGroup }> = []
+  for (const action of data.actions) {
+    const group = grouping.groupOf.get(action.id)
+    if (!group) {
+      if (isVisible(action)) rows.push({ action })
+      continue
+    }
+    if (action.id !== group.start.id) continue
+    const members = group.end ? [group.start, group.end] : [group.start]
+    if (!members.some(isVisible)) continue
+    rows.push({ group })
+    const open = expanded.has(group.id) || (selectedAction !== null && members.some((m) => m.id === selectedAction))
+    if (open) for (const member of members) rows.push({ action: member, member: group })
+  }
 
   // Keep the selected row (the live one while following) in view.
   useEffect(() => {
@@ -555,19 +615,92 @@ function Timeline({
         </HStack>
       ) : null}
       <List density="compact" hasDividers>
-        {visible.map((action) => {
+        {rows.map((row) => {
+          if ('group' in row) {
+            const { group } = row
+            const members = group.end ? [group.start, group.end] : [group.start]
+            const open = expanded.has(group.id) || (selectedAction !== null && members.some((m) => m.id === selectedAction))
+            const isSelected = selectedGroup === group.id
+            const target = (group.end ?? group.start).id
+            const holdsCurrent = members.some((m) => m.id === data.currentId)
+            return (
+              <ListItem
+                key={group.id}
+                isSelected={isSelected}
+                data-zi-row={isSelected ? 'selected' : undefined}
+                onClick={() => onSelectGroup(group)}
+                startContent={
+                  <IconButton
+                    label={open ? `Hide the actions of ${group.key}` : `Show the actions of ${group.key}`}
+                    size="sm"
+                    variant="ghost"
+                    icon={<Icon icon={open ? ChevronDown : ChevronRight} />}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleGroup(group.id)
+                    }}
+                  />
+                }
+                label={
+                  <HStack gap={2} vAlign="center">
+                    <StackItem size="fill">
+                      <Text type="code" maxLines={1} color={group.start.id >= futureFrom ? 'secondary' : 'primary'}>
+                        {group.key}
+                      </Text>
+                    </StackItem>
+                    <AsyncStatusToken group={group} />
+                    {group.ambiguous ? (
+                      <Token
+                        label="ambiguous"
+                        size="sm"
+                        color="orange"
+                        description={AMBIGUOUS_TEXT}
+                      />
+                    ) : null}
+                  </HStack>
+                }
+                endContent={
+                  <HStack gap={1} vAlign="center">
+                    <Text type="supporting" hasTabularNumbers>
+                      {group.durationMs === undefined ? 'running' : formatMs(group.durationMs)}
+                    </Text>
+                    {holdsCurrent && !open ? (
+                      <StatusDot variant="success" label="Current state" tooltip="Current state" />
+                    ) : target === data.currentId ? (
+                      <StatusDot variant="success" label="Current state" tooltip="Current state" />
+                    ) : (
+                      <IconButton
+                        label={`Jump to the end of ${group.key}`}
+                        tooltip="Jump to the state after this call"
+                        size="sm"
+                        variant="ghost"
+                        icon={<Icon icon={Undo2} />}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          model.command({ type: 'jump', toId: target })
+                        }}
+                      />
+                    )}
+                  </HStack>
+                }
+              />
+            )
+          }
+          const { action, member } = row
           const isFuture = action.id >= futureFrom
           const flags = flagsFor(action)
           const end = ends ? (action.id === ends.from ? 'from' : action.id === ends.to ? 'to' : null) : null
           const between = ends?.to !== undefined && isBetween(data, action.id, ends.from, ends.to)
-          const comparing = comparePick !== null || ends !== null
+          const comparing = comparePick !== null || ends !== null || selectedGroup !== null
           const isMarked = end !== null || (!comparing && action.id === selected)
+          const inSelectedGroup = member !== undefined && member.id === selectedGroup
           return (
             <ListItem
               key={action.id}
               ref={action.id === selected ? followRef : undefined}
               isSelected={isMarked}
-              data-zi-row={isMarked ? 'selected' : between ? 'between' : undefined}
+              data-zi-row={isMarked ? 'selected' : between || inSelectedGroup ? 'between' : undefined}
+              data-zi-member={member ? '' : undefined}
               onClick={(e) => onSelect(action.id, e.shiftKey)}
               startContent={
                 <Text type="supporting" hasTabularNumbers color={end || between ? 'accent' : undefined}>
@@ -631,7 +764,7 @@ function Timeline({
           )
         })}
       </List>
-      {visible.length === 0 ? (
+      {rows.length === 0 ? (
         <HStack paddingInline={3} paddingBlock={3}>
           <Text type="supporting">{emptyTimelineText(filter, costFilter, pinnedPath)}</Text>
         </HStack>
@@ -641,6 +774,22 @@ function Timeline({
       </HStack>
     </VStack>
   )
+}
+
+const NO_GROUPS: AsyncGrouping = { groups: [], groupOf: new Map() }
+
+const AMBIGUOUS_TEXT =
+  'Another call with the same name was running and neither had a requestId, so this end was paired with the oldest call. Add a requestId to the payload to pair them exactly.'
+
+const STATUS_TOKEN = {
+  running: { label: 'running', color: 'blue' },
+  fulfilled: { label: 'fulfilled', color: 'green' },
+  rejected: { label: 'rejected', color: 'red' },
+} as const
+
+function AsyncStatusToken({ group }: { group: AsyncGroup }) {
+  const { label, color } = STATUS_TOKEN[group.status]
+  return <Token label={label} size="sm" color={color} />
 }
 
 function isEditable(target: EventTarget | undefined): boolean {
@@ -711,8 +860,20 @@ function rangeEnds(data: PanelStoreData, a: number, b: number): [ActionMeta, Act
   return ia < ib ? [data.actions[ia], data.actions[ib]] : [data.actions[ib], data.actions[ia]]
 }
 
-function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreData; onClose?: () => void }) {
+function Detail({
+  model,
+  data,
+  grouping,
+  onClose,
+}: {
+  model: PanelModel
+  data: PanelStoreData
+  grouping: AsyncGrouping
+  onClose?: () => void
+}) {
   const selectedAction = useStore(model.store, (s) => s.selectedAction)
+  const selectedGroup = useStore(model.store, (s) => s.selectedGroup)
+  const group = selectedGroup ? grouping.groups.find((g) => g.id === selectedGroup) : undefined
   const compareFrom = useStore(model.store, (s) => s.compareFrom)
   const comparePick = useStore(model.store, (s) => s.comparePick)
   const tab = useStore(model.store, (s) => s.tab)
@@ -735,7 +896,14 @@ function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreD
   const isCurrent = action.id === data.currentId
   const changeCount = range ? (rangeChanges?.changes.length ?? 0) : (action.changes?.length ?? 0)
 
-  const title = range ? (
+  const title = group ? (
+    <HStack gap={1.5} vAlign="center">
+      <Text type="code" weight="semibold" maxLines={1}>
+        {group.key}
+      </Text>
+      <AsyncStatusToken group={group} />
+    </HStack>
+  ) : range ? (
     <HStack gap={1.5} vAlign="center">
       <Token
         label={`From #${range[0].id} ${range[0].name}`}
@@ -771,7 +939,12 @@ function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreD
       #{action.id} {action.name}
     </Text>
   )
-  const subtitle = range || picking ? (
+  const subtitle = group ? (
+    <Text type="supporting" hasTabularNumbers>
+      {group.durationMs === undefined ? 'running' : formatMs(group.durationMs)} · #{group.start.id}
+      {group.end ? `–#${group.end.id}` : ''}
+    </Text>
+  ) : range || picking ? (
     <Button label="Stop comparing" size="sm" variant="ghost" onClick={() => model.clearCompare()} />
   ) : (
     <Text type="supporting" hasTabularNumbers>
@@ -818,7 +991,7 @@ function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreD
     </VStack>
   ) : (
     <Toolbar
-      label={range ? 'Range comparison' : `Action #${action.id}`}
+      label={group ? `Async call ${group.key}` : range ? 'Range comparison' : `Action #${action.id}`}
       size="sm"
       gap={2}
       dividers={['bottom']}
@@ -846,7 +1019,15 @@ function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreD
           {tab === 'state' ? (
             <StateView model={model} data={data} action={action} />
           ) : tab === 'diff' ? (
-            <DiffView model={model} action={action} range={range} rangeChanges={rangeChanges} />
+            <DiffView
+              model={model}
+              action={action}
+              range={range}
+              rangeChanges={rangeChanges}
+              summary={group ? `during ${group.key} (#${group.start.id}–#${action.id})` : undefined}
+            />
+          ) : group ? (
+            <AsyncCallView group={group} />
           ) : (
             <ActionView action={action} />
           )}
@@ -1078,11 +1259,14 @@ function DiffView({
   action,
   range,
   rangeChanges,
+  summary,
 }: {
   model: PanelModel
   action: ActionMeta
   range: [ActionMeta, ActionMeta] | null
   rangeChanges: { changes: Array<Change>; truncated: boolean } | null
+  /** Replaces the "from #a to #b" sentence, e.g. for an async call. */
+  summary?: string
 }) {
   const showFunctions = useStore(model.store, (s) => s.showFunctions)
   const pinnedPath = useStore(model.store, (s) => s.pinnedPath)
@@ -1106,8 +1290,8 @@ function DiffView({
     <VStack gap={2}>
       {range ? (
         <Text type="supporting">
-          {changes.length} change{changes.length === 1 ? '' : 's'} from #{range[0].id} {range[0].name} to #{range[1].id}{' '}
-          {range[1].name}.
+          {changes.length} change{changes.length === 1 ? '' : 's'}{' '}
+          {summary ?? `from #${range[0].id} ${range[0].name} to #${range[1].id} ${range[1].name}`}.
         </Text>
       ) : null}
       {pinnedPath ? <Text type="supporting">Only changes under {formatPath(pinnedPath)}.</Text> : null}
@@ -1175,6 +1359,55 @@ function badgeFor(kind: Change['kind']): 'success' | 'error' | 'warning' {
 function isFunctionChange(change: Change): boolean {
   const isFn = (v: unknown) => typeof v === 'object' && v !== null && (v as { $t?: string }).$t === 'function'
   return (change.from === undefined || isFn(change.from)) && (change.to === undefined || isFn(change.to))
+}
+
+function AsyncCallView({ group }: { group: AsyncGroup }) {
+  const error = asyncError(group)
+  return (
+    <VStack gap={3}>
+      <MetadataList label={{ width: 120 }}>
+        <MetadataListItem label="Call">
+          <Text type="code">{group.key}</Text>
+        </MetadataListItem>
+        <MetadataListItem label="Status">
+          <AsyncStatusToken group={group} />
+        </MetadataListItem>
+        <MetadataListItem label="Duration">
+          {group.durationMs === undefined ? 'Still running' : formatMs(group.durationMs)}
+        </MetadataListItem>
+        <MetadataListItem label="Started">
+          <Text type="code">
+            #{group.start.id} {group.start.name} at {formatTime(group.start.ts)}
+          </Text>
+        </MetadataListItem>
+        {group.end ? (
+          <MetadataListItem label={group.status === 'rejected' ? 'Failed' : 'Finished'}>
+            <Text type="code">
+              #{group.end.id} {group.end.name} at {formatTime(group.end.ts)}
+            </Text>
+          </MetadataListItem>
+        ) : null}
+        {group.requestId !== undefined ? (
+          <MetadataListItem label="Request id">
+            <Text type="code">{group.requestId}</Text>
+          </MetadataListItem>
+        ) : null}
+        {error !== undefined ? (
+          <MetadataListItem label="Error">
+            {/* Wraps instead of truncating: the message is the point. */}
+            <Text type="code" data-zi-tone={describe(error).tone}>
+              {describe(error, 400).text}
+            </Text>
+          </MetadataListItem>
+        ) : null}
+      </MetadataList>
+      {group.ambiguous ? <Text type="supporting">{AMBIGUOUS_TEXT}</Text> : null}
+      <Text type="supporting">
+        Grouped by name: an action ending in :pending starts a call, and one ending in :fulfilled or :rejected
+        settles it.
+      </Text>
+    </VStack>
+  )
 }
 
 function ActionView({ action }: { action: ActionMeta }) {

@@ -174,3 +174,127 @@ function list(items: ReadonlyArray<string>): string {
   if (quoted.length <= 2) return quoted.join(' and ')
   return `${quoted.slice(0, -1).join(', ')} and ${quoted.at(-1)}`
 }
+
+/* ------------------------------------------------------------------ */
+/* Async groups: a naming convention, read by the panel only.          */
+/* ------------------------------------------------------------------ */
+
+export type AsyncPhase = 'pending' | 'fulfilled' | 'rejected'
+
+/** What a convention reads from one action: which call it belongs to and which phase it is. */
+export interface AsyncPhaseInfo {
+  /** The call's name, shared by its phases, e.g. `todos/load`. */
+  key: string
+  phase: AsyncPhase
+  /** Tells overlapping calls of the same `key` apart. */
+  requestId?: string
+}
+
+/** Maps an action to its async phase, or `null` when it isn't part of an async call. */
+export type AsyncConvention = (name: string, payload: unknown) => AsyncPhaseInfo | null
+
+const PHASE_SUFFIX = /^(.+?)[:/](pending|fulfilled|rejected)$/
+
+/**
+ * The default convention, the phase names of Redux Toolkit's `createAsyncThunk`:
+ * `todos/load:pending` then `todos/load:fulfilled` or `todos/load:rejected`
+ * (`/pending` works too). An optional `requestId` in the payload, or in
+ * `payload.meta`, pairs the phases of overlapping calls.
+ */
+export const defaultAsyncConvention: AsyncConvention = (name, payload) => {
+  const match = PHASE_SUFFIX.exec(name)
+  if (!match) return null
+  const requestId = requestIdOf(payload)
+  return { key: match[1]!, phase: match[2] as AsyncPhase, ...(requestId !== undefined ? { requestId } : {}) }
+}
+
+function requestIdOf(payload: unknown): string | undefined {
+  if (!isRecord(payload)) return undefined
+  const id = payload.requestId ?? (isRecord(payload.meta) ? payload.meta.requestId : undefined)
+  return typeof id === 'string' || typeof id === 'number' ? String(id) : undefined
+}
+
+export interface AsyncGroup {
+  /** Stable id: the key and the id of the pending action. */
+  id: string
+  key: string
+  requestId?: string
+  start: ActionMeta
+  end?: ActionMeta
+  status: 'running' | 'fulfilled' | 'rejected'
+  /** From the pending action to the one that settled it. */
+  durationMs?: number
+  /**
+   * Another call of the same name was running and neither carried a `requestId`,
+   * so the end was paired with the oldest open call: it may belong to the other one.
+   */
+  ambiguous: boolean
+}
+
+export interface AsyncGrouping {
+  groups: Array<AsyncGroup>
+  /** The group each grouped action (pending or settling) belongs to. */
+  groupOf: Map<number, AsyncGroup>
+}
+
+/**
+ * Pairs `pending` actions with the `fulfilled` / `rejected` action that settles
+ * them. Only app actions are read. A settling action with no open call (its
+ * pending action was dropped from history, say) stays an ordinary action.
+ */
+export function groupAsyncActions(
+  actions: ReadonlyArray<ActionMeta>,
+  convention: AsyncConvention = defaultAsyncConvention,
+): AsyncGrouping {
+  const groups: Array<AsyncGroup> = []
+  const groupOf = new Map<number, AsyncGroup>()
+  const open = new Map<string, Array<AsyncGroup>>()
+  for (const action of actions) {
+    if (action.source !== 'app') continue
+    const info = convention(action.name, action.payload)
+    if (!info) continue
+    const running = open.get(info.key) ?? []
+    if (info.phase === 'pending') {
+      const group: AsyncGroup = {
+        id: `${info.key}#${action.id}`,
+        key: info.key,
+        start: action,
+        status: 'running',
+        ambiguous: false,
+        ...(info.requestId !== undefined ? { requestId: info.requestId } : {}),
+      }
+      groups.push(group)
+      groupOf.set(action.id, group)
+      open.set(info.key, [...running, group])
+      continue
+    }
+    let group: AsyncGroup | undefined
+    if (info.requestId !== undefined) {
+      group = running.find((g) => g.requestId === info.requestId)
+    } else {
+      group = running.find((g) => g.requestId === undefined)
+      if (group && running.length > 1) group.ambiguous = true
+    }
+    if (!group) continue
+    group.end = action
+    group.status = info.phase === 'fulfilled' ? 'fulfilled' : 'rejected'
+    group.durationMs = action.ts - group.start.ts
+    groupOf.set(action.id, group)
+    open.set(
+      info.key,
+      running.filter((g) => g !== group),
+    )
+  }
+  return { groups, groupOf }
+}
+
+/** The error a rejected call recorded: `payload.error`, or the payload itself. */
+export function asyncError(group: AsyncGroup): unknown {
+  if (group.status !== 'rejected' || !group.end) return undefined
+  const payload = group.end.payload
+  return isRecord(payload) && 'error' in payload ? payload.error : payload
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
