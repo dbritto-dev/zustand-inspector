@@ -5,7 +5,8 @@ import type {
   ActionSource,
   Command,
   InspectorEvents,
-  MiddlewareInfo,
+  IntegrationInfo,
+  InspectedValue,
   SessionExport,
   StoreInfo,
 } from './protocol'
@@ -87,7 +88,7 @@ export class StoreRecorder<T> {
   #lastSerialized: unknown
   #disposers: Array<() => void> = []
   #disposed = false
-  #middlewares: MiddlewareInfo | undefined
+  #integrations: Array<IntegrationInfo> | undefined
   #commandHandlers = new Map<string, (command: Command) => void>()
 
   constructor(target: RecorderTarget<T>, initialState: T, options: RecorderOptions) {
@@ -144,7 +145,7 @@ export class StoreRecorder<T> {
   }
 
   /** Record the store's current state as a new action. */
-  record(name: string, payload?: unknown, source: ActionSource = 'app', timing?: ActionTiming): void {
+  record(name: string, payload?: unknown, source: ActionSource = 'app', timing?: ActionTiming, via?: string): void {
     if (this.#disposed || this.isSilent) return
     if (this.#paused) {
       this.#dirtyWhilePaused = true
@@ -156,6 +157,7 @@ export class StoreRecorder<T> {
     const branch = this.#discardFuture()
     const entry = this.#push(name, payload, source, this.#target.getState(), timing)
     if (branch) entry.meta.branch = branch
+    if (via) entry.meta.via = via
     if (timing) this.#trace(entry.meta, timing)
     this.#send('action', {
       ...envelope(),
@@ -218,19 +220,34 @@ export class StoreRecorder<T> {
     }
   }
 
-  get middlewares(): MiddlewareInfo | undefined {
-    return this.#middlewares
+  get integrations(): Array<IntegrationInfo> | undefined {
+    return this.#integrations
   }
 
-  /** Describe the store's other middlewares; the panel is told right away. */
-  setMiddlewares(middlewares: MiddlewareInfo): void {
-    this.#middlewares = middlewares
-    this.#send('middlewares', { ...envelope(), storeId: this.storeId, middlewares })
+  /** Describe the store's middleware integrations; the panel is told right away. */
+  setIntegrations(integrations: Array<IntegrationInfo>): void {
+    this.#integrations = integrations
+    this.#send('integrations', { ...envelope(), storeId: this.storeId, integrations })
   }
 
-  /** Send an integration's reply to the panel, with this store's id and the session envelope. */
-  sendPersisted(value: Omit<InspectorEvents['persisted'], 'v' | 'session' | 'storeId'>): void {
-    this.#send('persisted', { ...envelope(), storeId: this.storeId, ...value })
+  sendInspected(id: string, result: InspectedValue | undefined, error?: string): void {
+    this.#send('inspected', {
+      ...envelope(),
+      storeId: this.storeId,
+      id,
+      ...(result ? { result } : {}),
+      ...(error !== undefined ? { error } : {}),
+    })
+  }
+
+  sendIntegrationResult(id: string, command: string, error?: string): void {
+    this.#send('integration-result', {
+      ...envelope(),
+      storeId: this.storeId,
+      id,
+      command,
+      ...(error !== undefined ? { error } : {}),
+    })
   }
 
   /** Serialize a value with this store's options (redaction included). */
@@ -319,7 +336,7 @@ export class StoreRecorder<T> {
       dropped: this.#dropped,
       actions: this.actions,
       state: this.#serialize(this.#liveState()),
-      ...(this.#middlewares ? { middlewares: this.#middlewares } : {}),
+      ...(this.#integrations?.length ? { integrations: this.#integrations } : {}),
     }
   }
 

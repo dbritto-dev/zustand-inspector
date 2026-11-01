@@ -27,8 +27,9 @@ import { FileInput } from '@astryxdesign/core/FileInput'
 import { Tooltip } from '@astryxdesign/core/Tooltip'
 import { Section } from '@astryxdesign/core/Section'
 import { Banner } from '@astryxdesign/core/Banner'
+import { TextArea } from '@astryxdesign/core/TextArea'
 import { ToggleButton, ToggleButtonGroup } from '@astryxdesign/core/ToggleButton'
-import { ChevronDown, ChevronRight, CircleDot, HardDrive, Hourglass, RefreshCw, SkipBack, StepBack, StepForward, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, CircleDot, HardDrive, Hourglass, ListTree, Plug, RefreshCw, Send, SkipBack, StepBack, StepForward, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import { formatPath } from '../diff'
@@ -54,9 +55,9 @@ import {
   type FlagKind,
   type Path,
 } from '../analysis'
-import { snapshotKey, type CostFilter, type PanelModel, type PanelStoreData, type PanelTab } from '../model'
+import { integrationKey, snapshotKey, type CostFilter, type PanelModel, type PanelStoreData, type PanelTab } from '../model'
 import { formatDelta, formatTime } from '../panel/format'
-import type { ActionMeta, Change, PersistInfo } from '../protocol'
+import type { ActionMeta, Change, InspectedValue, IntegrationInfo } from '../protocol'
 import { childrenOf, describe, isFunctionValue, KeyValue, kindOf, summarize, ValueText } from './Value'
 
 /*
@@ -197,8 +198,9 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
   const filter = useStore(model.store, (s) => s.filter)
   const showFunctions = useStore(model.store, (s) => s.showFunctions)
   const [importOpen, setImportOpen] = useState(false)
-  const [persistOpen, setPersistOpen] = useState(false)
-  const persist = data.middlewares?.persist
+  const [openIntegration, setOpenIntegration] = useState<string | null>(null)
+  const integrations = data.integrations ?? []
+  const withContent = integrations.filter(hasContent)
   const status = statusOf(data)
   const currentSize = data.actions.find((a) => a.id === data.currentId)?.cost?.stateSize
 
@@ -253,28 +255,24 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
                 </Text>
               </Tooltip>
             ) : null}
-            {persist ? (
-              <Button
-                label="persist"
-                size="sm"
-                variant="ghost"
-                isIconOnly={compact}
-                icon={<Icon icon={persist.hydrated ? HardDrive : Hourglass} />}
-                tooltip={persistSummary(persist)}
-                onClick={() => setPersistOpen(true)}
-              />
-            ) : null}
-            {data.middlewares?.redux && !compact ? (
-              <Token label="redux" size="sm" color="gray" description="Actions come from the redux middleware's dispatch" />
-            ) : null}
-            {data.middlewares?.devtools && !compact ? (
-              <Token
-                label="devtools"
-                size="sm"
-                color="gray"
-                description="Redux DevTools' devtools middleware is on this store too"
-              />
-            ) : null}
+            {integrations.map((integration) =>
+              hasContent(integration) ? (
+                <IntegrationButton
+                  key={integration.id}
+                  integration={integration}
+                  compact={compact}
+                  onOpen={() => setOpenIntegration(integration.id)}
+                />
+              ) : compact ? null : (
+                <Token
+                  key={integration.id}
+                  label={integration.label}
+                  size="sm"
+                  color="gray"
+                  description={integration.description ?? integration.label}
+                />
+              ),
+            )}
           </>
         }
         endContent={
@@ -315,21 +313,12 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
                   description: 'Load state from an exported file',
                   onClick: () => setImportOpen(true),
                 },
-                ...(persist
-                  ? [
-                      { type: 'divider' as const },
-                      {
-                        label: 'Persisted storage…',
-                        description: `What persist keeps under "${persist.name}"`,
-                        onClick: () => setPersistOpen(true),
-                      },
-                      {
-                        label: 'Rehydrate from storage',
-                        description: 'Load the stored state into the store again',
-                        onClick: () => model.command({ type: 'persist:rehydrate' }),
-                      },
-                    ]
-                  : []),
+                ...(withContent.length > 0 ? [{ type: 'divider' as const }] : []),
+                ...withContent.map((integration) => ({
+                  label: `${integration.label}…`,
+                  description: integration.status?.text ?? integration.description ?? 'Middleware',
+                  onClick: () => setOpenIntegration(integration.id),
+                })),
               ]}
             />
           </>
@@ -342,168 +331,332 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
       ) : null}
       <Scrubber model={model} data={data} compact={compact} />
       <ImportDialog model={model} storeName={data.name} isOpen={importOpen} onOpenChange={setImportOpen} />
-      {persist ? (
-        <PersistDialog model={model} data={data} persist={persist} isOpen={persistOpen} onOpenChange={setPersistOpen} />
-      ) : null}
+      {withContent.map((integration) => (
+        <IntegrationDialog
+          key={integration.id}
+          model={model}
+          data={data}
+          integration={integration}
+          isOpen={openIntegration === integration.id}
+          onOpenChange={(open) => setOpenIntegration(open ? integration.id : null)}
+        />
+      ))}
     </VStack>
   )
 }
 
-function persistSummary(persist: PersistInfo): string {
-  if (persist.hydrated) return `persist: hydrated from "${persist.name}" (version ${persist.version}). Open storage.`
-  if (persist.skipHydration) return `persist: not hydrated yet. skipHydration is on, so the app calls rehydrate().`
-  return `persist: hydrating from "${persist.name}"…`
+/** Integrations with something to show get a button and a dialog; the rest a marker. */
+function hasContent(integration: IntegrationInfo): boolean {
+  return !!(integration.status || integration.facts?.length || integration.commands?.length || integration.inspectable)
 }
 
-function PersistDialog({
+const INTEGRATION_ICONS = { storage: HardDrive, dispatch: Send, subscriptions: ListTree, plug: Plug } as const
+
+const TONE_DOT = { success: 'success', warning: 'warning', error: 'error', info: 'accent' } as const
+
+function IntegrationButton({
+  integration,
+  compact,
+  onOpen,
+}: {
+  integration: IntegrationInfo
+  compact: boolean
+  onOpen: () => void
+}) {
+  const status = integration.status
+  const busy = status?.tone === 'info'
+  const icon = busy ? Hourglass : INTEGRATION_ICONS[integration.icon ?? 'plug']
+  return (
+    <HStack gap={0.5} vAlign="center">
+      <Button
+        label={integration.label}
+        size="sm"
+        variant="ghost"
+        isIconOnly={compact}
+        icon={<Icon icon={icon} />}
+        tooltip={[integration.label, status?.text ?? integration.description].filter(Boolean).join(': ')}
+        onClick={onOpen}
+      />
+      {status && status.tone !== 'success' ? (
+        <StatusDot variant={TONE_DOT[status.tone]} label={status.text} tooltip={status.text} />
+      ) : null}
+    </HStack>
+  )
+}
+
+function IntegrationDialog({
   model,
   data,
-  persist,
+  integration,
   isOpen,
   onOpenChange,
 }: {
   model: PanelModel
   data: PanelStoreData
-  persist: PersistInfo
+  integration: IntegrationInfo
   isOpen: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const persisted = useStore(model.store, (s) => s.persisted[data.storeId])
-  // Read the storage whenever the dialog opens, and again after every action:
-  // persist writes on each set, so what's stored follows the store.
+  const key = integrationKey(data.storeId, integration.id)
+  const inspected = useStore(model.store, (s) => s.inspected[key])
+  const lastResult = useStore(model.store, (s) => s.integrationResults[key])
+  const inspect = () => model.command({ type: 'integration:inspect', id: integration.id })
+  // Inspect when the dialog opens and after every action: what a middleware
+  // holds (persist's storage, subscriptions) follows the store.
   useEffect(() => {
-    if (isOpen) model.command({ type: 'persist:read' })
-  }, [isOpen, model, data.currentId])
-  const drift = useMemo(
-    () => (persisted?.stored ? rangeDiff(persisted.current, persisted.stored.state) : null),
-    [persisted],
-  )
-  const storedItems = useMemo(
-    () => (persisted?.stored && kindOf(persisted.stored.state) !== 'leaf' ? toTreeItems(persisted.stored.state, [], false, 0) : []),
-    [persisted],
-  )
-  const hydration = persist.hydrated
-    ? { variant: 'success' as const, label: 'Hydrated' }
-    : persist.skipHydration
-      ? { variant: 'warning' as const, label: 'Not hydrated yet: skipHydration is on, so the app calls rehydrate()' }
-      : { variant: 'accent' as const, label: 'Hydrating…' }
-  const storedVersion = persisted?.stored?.version
+    if (isOpen && integration.inspectable) inspect()
+  }, [isOpen, integration.inspectable, data.currentId])
 
   return (
     <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={560}>
       <Layout
         header={
           <DialogHeader
-            title="Persisted storage"
-            subtitle={`persist middleware on the "${data.name}" store`}
+            title={integration.label}
+            subtitle={`Middleware on the "${data.name}" store`}
             onOpenChange={onOpenChange}
           />
         }
         content={
           <LayoutContent>
             <VStack gap={4}>
-              <MetadataList label={{ width: 132 }}>
-                <MetadataListItem label="Storage key">
-                  <Text type="code">{persist.name}</Text>
-                </MetadataListItem>
-                <MetadataListItem label="Version">
-                  <Text hasTabularNumbers>{persist.version}</Text>
-                </MetadataListItem>
-                <MetadataListItem label="Hydration">
-                  <HStack gap={1.5} vAlign="center">
-                    <StatusDot variant={hydration.variant} label={hydration.label} />
-                    <Text>{hydration.label}</Text>
-                  </HStack>
-                </MetadataListItem>
-                <MetadataListItem label="Persisted keys">
-                  <Text type="code">{persist.keys ? persist.keys.join(', ') || 'none' : 'unknown'}</Text>
-                </MetadataListItem>
-              </MetadataList>
-
-              <Section variant="muted" padding={3}>
-                <VStack gap={2}>
-                  <Text weight="semibold">Stored value</Text>
-                  {!persisted ? (
-                    <Text color="secondary">Reading storage…</Text>
-                  ) : persisted.error ? (
-                    <Banner status="error" title="Couldn't read the storage" description={persisted.error} />
-                  ) : !persisted.stored ? (
-                    <Text color="secondary">Nothing is stored under "{persist.name}".</Text>
-                  ) : (
-                    <>
-                      {drift && drift.changes.length === 0 ? (
-                        <HStack gap={1.5} vAlign="center">
-                          <StatusDot variant="success" label="In sync" />
-                          <Text>Matches the current state.</Text>
-                        </HStack>
-                      ) : drift ? (
-                        <VStack gap={1}>
-                          <HStack gap={1.5} vAlign="center">
-                            <StatusDot variant="warning" label="Out of sync" />
-                            <Text>
-                              Differs from the current state in {drift.changes.length} place
-                              {drift.changes.length === 1 ? '' : 's'} (current → stored):
-                            </Text>
-                          </HStack>
-                          <List density="compact" edge="flush">
-                            {drift.changes.slice(0, 8).map((change, i) => (
-                              <ListItem
-                                key={`${formatPath(change.path)}-${i}`}
-                                label={
-                                  <Text type="code" weight="semibold" maxLines={1}>
-                                    {formatPath(change.path)}
-                                  </Text>
-                                }
-                                description={<ChangeValues change={change} />}
-                              />
-                            ))}
-                          </List>
-                        </VStack>
-                      ) : null}
-                      {storedVersion !== undefined && storedVersion !== persist.version ? (
-                        <Text type="supporting">
-                          Stored with version {storedVersion}; the store is on version {persist.version}, so migrate
-                          runs on the next rehydrate.
-                        </Text>
-                      ) : null}
-                      {storedItems.length > 0 ? (
-                        <TreeList key={persisted.readAt} density="compact" items={storedItems} />
+              {integration.description ? <Text type="supporting">{integration.description}</Text> : null}
+              {integration.status || integration.facts?.length ? (
+                <MetadataList label={{ width: 148 }}>
+                  {integration.status ? (
+                    <MetadataListItem label="Status">
+                      <HStack gap={1.5} vAlign="center">
+                        <StatusDot variant={TONE_DOT[integration.status.tone]} label={integration.status.text} />
+                        <Text>{integration.status.text}</Text>
+                      </HStack>
+                    </MetadataListItem>
+                  ) : null}
+                  {integration.facts?.map((fact) => (
+                    <MetadataListItem key={fact.label} label={fact.label}>
+                      {typeof fact.value === 'string' ? (
+                        <Text type="code">{fact.value}</Text>
                       ) : (
-                        <ValueText value={persisted.stored.state} />
+                        <ValueText value={fact.value} />
                       )}
-                    </>
-                  )}
-                </VStack>
-              </Section>
-
-              <HStack gap={2} justify="end" wrap="wrap">
-                <Button
-                  label="Refresh"
-                  size="sm"
-                  variant="ghost"
-                  icon={<Icon icon={RefreshCw} />}
-                  onClick={() => model.command({ type: 'persist:read' })}
+                    </MetadataListItem>
+                  ))}
+                </MetadataList>
+              ) : null}
+              {integration.inspectable ? (
+                <InspectedSection inspected={inspected} onRefresh={inspect} />
+              ) : null}
+              {integration.commands?.length ? (
+                <IntegrationCommands
+                  model={model}
+                  integration={integration}
+                  lastResult={lastResult}
                 />
-                <Button
-                  label="Clear storage"
-                  size="sm"
-                  variant="destructive"
-                  tooltip="Remove the stored value. The store keeps its current state until it is saved again."
-                  onClick={() => model.command({ type: 'persist:clear' })}
-                />
-                <Button
-                  label="Rehydrate"
-                  size="sm"
-                  variant="primary"
-                  tooltip="Load the stored value into the store, as on page load"
-                  onClick={() => model.command({ type: 'persist:rehydrate' })}
-                />
-              </HStack>
+              ) : null}
             </VStack>
           </LayoutContent>
         }
       />
     </Dialog>
+  )
+}
+
+function InspectedSection({
+  inspected,
+  onRefresh,
+}: {
+  inspected: { result?: InspectedValue; error?: string; readAt: number } | undefined
+  onRefresh: () => void
+}) {
+  const result = inspected?.result
+  const drift = useMemo(
+    () =>
+      result?.compare && result.value !== null && result.value !== undefined
+        ? rangeDiff(result.compare.with, result.value)
+        : null,
+    [result],
+  )
+  const items = useMemo(
+    () =>
+      result?.value !== undefined && result.value !== null && kindOf(result.value) !== 'leaf'
+        ? toTreeItems(result.value, [], false, 0)
+        : [],
+    [result],
+  )
+  const isEmpty = result ? (result.rows ? result.rows.length === 0 : result.value === null || result.value === undefined) : false
+
+  return (
+    <Section variant="muted" padding={3}>
+      <VStack gap={2}>
+        <HStack gap={2} vAlign="center">
+          <StackItem size="fill">
+            <Text weight="semibold">{result?.title ?? 'Details'}</Text>
+          </StackItem>
+          <IconButton label="Refresh" tooltip="Read it again" size="sm" variant="ghost" icon={<Icon icon={RefreshCw} />} onClick={onRefresh} />
+        </HStack>
+        {!inspected ? (
+          <Text color="secondary">Reading…</Text>
+        ) : inspected.error !== undefined ? (
+          <Banner status="error" title="Couldn't read it" description={inspected.error} />
+        ) : !result ? null : isEmpty ? (
+          <Text color="secondary">{result.empty ?? 'Nothing here.'}</Text>
+        ) : (
+          <>
+            {drift && result.compare ? (
+              drift.changes.length === 0 ? (
+                <HStack gap={1.5} vAlign="center">
+                  <StatusDot variant="success" label="In sync" />
+                  <Text>Matches {result.compare.label}.</Text>
+                </HStack>
+              ) : (
+                <VStack gap={1}>
+                  <HStack gap={1.5} vAlign="center">
+                    <StatusDot variant="warning" label="Out of sync" />
+                    <Text>
+                      Differs from {result.compare.label} in {drift.changes.length} place
+                      {drift.changes.length === 1 ? '' : 's'} ({result.compare.label} → this):
+                    </Text>
+                  </HStack>
+                  <List density="compact" edge="flush">
+                    {drift.changes.slice(0, 8).map((change, i) => (
+                      <ListItem
+                        key={`${formatPath(change.path)}-${i}`}
+                        label={
+                          <Text type="code" weight="semibold" maxLines={1}>
+                            {formatPath(change.path)}
+                          </Text>
+                        }
+                        description={<ChangeValues change={change} />}
+                      />
+                    ))}
+                  </List>
+                </VStack>
+              )
+            ) : null}
+            {result.note ? <Text type="supporting">{result.note}</Text> : null}
+            {result.rows ? (
+              <List density="compact" hasDividers edge="flush">
+                {result.rows.map((row, i) => (
+                  <ListItem
+                    key={i}
+                    label={
+                      <Text type="code" maxLines={2}>
+                        {row.title}
+                      </Text>
+                    }
+                    description={row.detail}
+                    endContent={
+                      row.meta ? (
+                        <Text type="supporting" hasTabularNumbers>
+                          {row.meta}
+                        </Text>
+                      ) : undefined
+                    }
+                  />
+                ))}
+              </List>
+            ) : items.length > 0 ? (
+              <TreeList key={inspected.readAt} density="compact" items={items} />
+            ) : (
+              <ValueText value={result.value} />
+            )}
+          </>
+        )}
+      </VStack>
+    </Section>
+  )
+}
+
+function IntegrationCommands({
+  model,
+  integration,
+  lastResult,
+}: {
+  model: PanelModel
+  integration: IntegrationInfo
+  lastResult: { command: string; error?: string; at: number } | undefined
+}) {
+  const commands = integration.commands ?? []
+  const withInput = commands.filter((c) => c.input)
+  const plain = commands.filter((c) => !c.input)
+  const run = (command: string, input?: unknown) =>
+    model.command({ type: 'integration', id: integration.id, command, ...(input !== undefined ? { input } : {}) })
+  return (
+    <VStack gap={3}>
+      {withInput.map((command) => (
+        <JsonCommand
+          key={command.id}
+          command={command}
+          error={lastResult?.command === command.id ? lastResult.error : undefined}
+          onRun={(input) => run(command.id, input)}
+        />
+      ))}
+      {plain.length > 0 ? (
+        <HStack gap={2} justify="end" wrap="wrap">
+          {plain.map((command) => (
+            <Button
+              key={command.id}
+              label={command.label}
+              size="sm"
+              variant={command.tone === 'primary' ? 'primary' : command.tone === 'destructive' ? 'destructive' : 'secondary'}
+              tooltip={command.disabled ?? command.description}
+              isDisabled={!!command.disabled}
+              onClick={() => run(command.id)}
+            />
+          ))}
+        </HStack>
+      ) : null}
+      {lastResult?.error && !withInput.some((c) => c.id === lastResult.command) ? (
+        <Banner status="error" title="That didn't work" description={lastResult.error} />
+      ) : null}
+    </VStack>
+  )
+}
+
+function JsonCommand({
+  command,
+  error,
+  onRun,
+}: {
+  command: NonNullable<IntegrationInfo['commands']>[number]
+  error: string | undefined
+  onRun: (input: unknown) => void
+}) {
+  const [text, setText] = useState('')
+  const [parseError, setParseError] = useState<string | null>(null)
+  const message = parseError ?? error
+  return (
+    <VStack gap={2}>
+      <TextArea
+        label={command.input?.label ?? 'Input'}
+        description={command.description}
+        placeholder={command.input?.placeholder}
+        rows={3}
+        value={text}
+        status={message ? { type: 'error', message } : undefined}
+        onChange={(value) => {
+          setText(value)
+          setParseError(null)
+        }}
+      />
+      <HStack gap={2} justify="end">
+        <Button
+          label={command.label}
+          size="sm"
+          variant="primary"
+          isDisabled={!!command.disabled}
+          tooltip={command.disabled}
+          onClick={() => {
+            const source = text.trim() || command.input?.placeholder || ''
+            try {
+              onRun(JSON.parse(source))
+              setParseError(null)
+            } catch {
+              setParseError('That is not valid JSON.')
+            }
+          }}
+        />
+      </HStack>
+    </VStack>
   )
 }
 

@@ -1,4 +1,5 @@
-import { persist } from 'zustand/middleware'
+import { persist, redux, subscribeWithSelector } from 'zustand/middleware'
+import { immer } from 'zustand/middleware/immer'
 import { createStore } from 'zustand/vanilla'
 import { inspectStore, inspector } from '../src'
 
@@ -14,18 +15,44 @@ export type CounterState = {
 }
 
 // Action names come from the third `set` argument, or are inferred from the caller.
+// immer lets actions mutate a draft; subscribeWithSelector lets the page listen
+// to one slice (see the showcase). The panel shows both.
 export const counterStore = createStore<CounterState>()(
   inspector(
-    (set) => ({
-      count: 0,
-      step: 1,
-      heavy: false,
-      increment: () => set((s) => ({ count: s.count + s.step, heavy: false })), // name inferred: "increment"
-      decrement: () => set((s) => ({ count: s.count - s.step }), false, 'decrement'),
-      setStep: (step) => set({ step }, false, { type: 'setStep', step }),
-      incrementSlow: () => set((s) => ({ count: s.count + s.step, heavy: true }), false, 'incrementSlow'),
-    }),
+    subscribeWithSelector(
+      immer((set) => ({
+        count: 0,
+        step: 1,
+        heavy: false,
+        // name inferred: "increment"
+        increment: () =>
+          set((s) => {
+            s.count += s.step
+            s.heavy = false
+          }),
+        decrement: () => set((s) => ({ count: s.count - s.step }), false, 'decrement'),
+        setStep: (step) => set({ step }, false, { type: 'setStep', step }),
+        incrementSlow: () => set((s) => ({ count: s.count + s.step, heavy: true }), false, 'incrementSlow'),
+      })),
+    ),
     { name: 'counter' },
+  ),
+)
+
+export type Vote = { type: 'vote'; option: 'zustand' | 'jotai' | 'valtio' } | { type: 'reset' }
+export type VotesState = { zustand: number; jotai: number; valtio: number }
+
+const initialVotes: VotesState = { zustand: 0, jotai: 0, valtio: 0 }
+
+// The redux middleware: actions are dispatched, and the reducer computes the state.
+export const votesStore = createStore(
+  inspector(
+    redux(
+      (state: VotesState, action: Vote): VotesState =>
+        action.type === 'reset' ? initialVotes : { ...state, [action.option]: state[action.option] + 1 },
+      initialVotes,
+    ),
+    { name: 'votes' },
   ),
 )
 

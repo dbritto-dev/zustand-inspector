@@ -57,37 +57,38 @@ export interface ActionMeta {
    * from `fromId`, and the `count` later actions on the old branch were discarded.
    */
   branch?: { fromId: number; count: number }
+  /** The integration whose write this was (e.g. `persist` for `persist/rehydrate`). */
+  via?: string
 }
 
-/** Zustand's `persist` middleware on a store, as seen from the page. */
-export interface PersistInfo {
-  /** The storage key (persist's `name` option). */
-  name: string
-  version: number
-  hydrated: boolean
-  /** `skipHydration: true`: the app calls `rehydrate()` itself. */
-  skipHydration?: boolean
-  /** Top-level keys that persist writes, after `partialize` (functions left out). */
-  keys?: Array<string>
+/** A middleware integration as the panel sees it (see `InspectorIntegration`). */
+export interface IntegrationInfo {
+  id: string
+  label: string
+  icon?: 'storage' | 'dispatch' | 'subscriptions' | 'plug'
+  description?: string
+  status?: { tone: 'success' | 'warning' | 'error' | 'info'; text: string }
+  facts?: Array<{ label: string; value: Serialized }>
+  /** The panel can ask for `integration:inspect`. */
+  inspectable?: boolean
+  commands?: Array<{
+    id: string
+    label: string
+    description?: string
+    tone?: 'primary' | 'default' | 'destructive'
+    disabled?: string
+    input?: { kind: 'json'; label: string; placeholder?: string }
+  }>
 }
 
-/** Other middlewares the inspector recognised on the store. */
-export interface MiddlewareInfo {
-  persist?: PersistInfo
-  /** `redux` middleware: actions come from `dispatch`. */
-  redux?: boolean
-  /** Redux DevTools `devtools` middleware is on the store as well. */
-  devtools?: boolean
-}
-
-/** What persist's storage holds for a store, read on request. */
-export interface PersistedValue {
-  /** `null` when nothing is stored under the key. */
-  stored: { state: Serialized; version?: number } | null
-  /** The current state after `partialize`, to compare with what is stored. */
-  current: Serialized
-  /** Reading or parsing the storage failed. */
-  error?: string
+/** An integration's answer to `integration:inspect`. */
+export interface InspectedValue {
+  title?: string
+  value?: Serialized
+  rows?: Array<{ title: string; detail?: string; meta?: string }>
+  empty?: string
+  compare?: { with: Serialized; label: string }
+  note?: string
 }
 
 export interface StoreInfo {
@@ -100,7 +101,7 @@ export interface StoreInfo {
   dropped: number
   actions: Array<ActionMeta>
   state: Serialized
-  middlewares?: MiddlewareInfo
+  integrations?: Array<IntegrationInfo>
 }
 
 export type Command =
@@ -112,9 +113,8 @@ export type Command =
   | { type: 'import'; state: Serialized }
   | { type: 'snapshot'; id: number }
   | { type: 'export' }
-  | { type: 'persist:rehydrate' }
-  | { type: 'persist:clear' }
-  | { type: 'persist:read' }
+  | { type: 'integration'; id: string; command: string; input?: Serialized }
+  | { type: 'integration:inspect'; id: string }
 
 export interface SessionExport {
   format: 'zustand-inspector-session'
@@ -153,8 +153,9 @@ export type InspectorEvents = {
   export: Envelope & { storeId: string; data: SessionExport }
   /** page → panel: store was disposed. */
   removed: Envelope & { storeId: string }
-  middlewares: Envelope & { storeId: string; middlewares: MiddlewareInfo }
-  persisted: Envelope & { storeId: string } & PersistedValue
+  integrations: Envelope & { storeId: string; integrations: Array<IntegrationInfo> }
+  inspected: Envelope & { storeId: string; id: string; result?: InspectedValue; error?: string }
+  'integration-result': Envelope & { storeId: string; id: string; command: string; error?: string }
   /** panel → page: a command for one store. */
   command: Envelope & { storeId: string; command: Command }
 }

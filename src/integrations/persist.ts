@@ -1,15 +1,16 @@
-import type { MiddlewareInfo, PersistInfo } from '../protocol'
-import type { StoreRecorder } from '../recorder'
+import type { InspectorIntegration } from './types'
 
-/** The parts of `api.persist` (zustand/middleware `persist`) the inspector uses. */
-interface PersistApi {
+/** The parts of `api.persist` (zustand/middleware `persist`) the integration uses. */
+export interface PersistApi {
   getOptions(): {
     name?: string
     version?: number
     skipHydration?: boolean
     partialize?: (state: any) => unknown
     storage?: {
-      getItem(name: string): { state: unknown; version?: number } | null | Promise<{ state: unknown; version?: number } | null>
+      getItem(
+        name: string,
+      ): { state: unknown; version?: number } | null | Promise<{ state: unknown; version?: number } | null>
     }
   }
   rehydrate(): Promise<void> | void
@@ -19,26 +20,9 @@ interface PersistApi {
   onFinishHydration(listener: (state: any) => void): () => void
 }
 
-export function persistApiOf(api: unknown): PersistApi | undefined {
-  const persist = (api as { persist?: Partial<PersistApi> } | undefined)?.persist
-  return persist && typeof persist.getOptions === 'function' && typeof persist.hasHydrated === 'function'
-    ? (persist as PersistApi)
-    : undefined
-}
-
-/** Middlewares other than persist that leave a mark on the store api. */
-export function detectMiddlewares(api: unknown): MiddlewareInfo {
-  const a = api as Record<string, unknown>
-  const info: MiddlewareInfo = {}
-  if (typeof a.dispatch === 'function' && 'dispatchFromDevtools' in a) info.redux = true
-  if (a.devtools !== undefined) info.devtools = true
-  return info
-}
-
 function persistedKeys(persist: PersistApi, state: unknown): Array<string> | undefined {
   try {
-    const partialize = persist.getOptions().partialize ?? ((s: unknown) => s)
-    const value = partialize(state)
+    const value = (persist.getOptions().partialize ?? ((s: unknown) => s))(state)
     if (typeof value !== 'object' || value === null) return undefined
     // JSON storage drops functions, so they are never really persisted.
     return Object.keys(value).filter((k) => typeof (value as Record<string, unknown>)[k] !== 'function')
@@ -47,82 +31,89 @@ function persistedKeys(persist: PersistApi, state: unknown): Array<string> | und
   }
 }
 
-export interface PersistConnection {
-  /** True between persist's onHydrate and onFinishHydration: sets then are the rehydration. */
-  readonly hydrating: boolean
-  dispose(): void
-}
+/** True between persist's onHydrate and onFinishHydration, per persist api. */
+const hydrating = new WeakMap<PersistApi, boolean>()
 
 /**
- * Connects a store's `persist` middleware to the panel: hydration status and
- * persisted keys, the stored value on request, and rehydrate / clear commands.
+ * `persist`: storage key, version, hydration and persisted keys; the stored
+ * value compared with the current state; rehydrate and clear. Rehydration is
+ * recorded as `persist/rehydrate`.
  */
-export function connectPersist(
-  persist: PersistApi,
-  recorder: StoreRecorder<any>,
-  api: { getState(): unknown },
-): PersistConnection {
-  const options = () => persist.getOptions()
-  // Async storage may still be loading when the store is created.
-  let hydrating = !persist.hasHydrated() && !options().skipHydration
-
-  const info = (): PersistInfo => {
-    const o = options()
-    const keys = persistedKeys(persist, api.getState())
+export const persistIntegration: InspectorIntegration<PersistApi> = {
+  id: 'persist',
+  label: 'persist',
+  icon: 'storage',
+  detect(api) {
+    const persist = (api as { persist?: Partial<PersistApi> }).persist
+    return persist && typeof persist.getOptions === 'function' && typeof persist.hasHydrated === 'function'
+      ? (persist as PersistApi)
+      : undefined
+  },
+  setup(persist, ctx) {
+    // Async storage may still be loading, and a persist that wraps the inspector
+    // connects in the middle of its first hydration.
+    hydrating.set(persist, !persist.hasHydrated() && !persist.getOptions().skipHydration)
+    const offStart = persist.onHydrate(() => {
+      hydrating.set(persist, true)
+      ctx.update()
+    })
+    const offEnd = persist.onFinishHydration(() => {
+      hydrating.set(persist, false)
+      ctx.update()
+    })
+    return () => {
+      offStart()
+      offEnd()
+    }
+  },
+  writing: (persist) => (hydrating.get(persist) ? 'persist/rehydrate' : undefined),
+  status(persist) {
+    if (persist.hasHydrated()) return { tone: 'success', text: 'Hydrated' }
+    if (persist.getOptions().skipHydration) {
+      return { tone: 'warning', text: 'Not hydrated yet: skipHydration is on, so the app calls rehydrate()' }
+    }
+    return { tone: 'info', text: 'Hydrating…' }
+  },
+  facts(persist, state) {
+    const options = persist.getOptions()
+    const keys = persistedKeys(persist, state)
+    return [
+      { label: 'Storage key', value: options.name ?? '' },
+      { label: 'Version', value: options.version ?? 0 },
+      { label: 'Persisted keys', value: keys ? keys.join(', ') || 'none' : 'unknown' },
+    ]
+  },
+  async inspect(persist, state) {
+    const options = persist.getOptions()
+    const current = (options.partialize ?? ((s: unknown) => s))(state)
+    const stored = options.storage ? await options.storage.getItem(options.name ?? '') : null
+    const version = options.version ?? 0
     return {
-      name: o.name ?? '',
-      version: o.version ?? 0,
-      hydrated: persist.hasHydrated(),
-      ...(o.skipHydration ? { skipHydration: true } : {}),
-      ...(keys ? { keys } : {}),
+      title: 'Stored value',
+      value: stored ? stored.state : null,
+      empty: `Nothing is stored under "${options.name ?? ''}".`,
+      ...(stored ? { compare: { with: current, label: 'the current state' } } : {}),
+      ...(stored && typeof stored.version === 'number' && stored.version !== version
+        ? {
+            note: `Stored with version ${stored.version}; the store is on version ${version}, so migrate runs on the next rehydrate.`,
+          }
+        : {}),
     }
-  }
-  const publish = () => recorder.setMiddlewares({ ...detectMiddlewares(api), persist: info() })
-
-  const read = async () => {
-    const o = options()
-    const partialize = o.partialize ?? ((s: unknown) => s)
-    let current: unknown
-    try {
-      current = recorder.serializeValue(partialize(api.getState()))
-      const raw = o.storage ? await o.storage.getItem(o.name ?? '') : null
-      recorder.sendPersisted({
-        stored: raw
-          ? { state: recorder.serializeValue(raw.state), ...(raw.version !== undefined ? { version: raw.version } : {}) }
-          : null,
-        current,
-      })
-    } catch (error) {
-      recorder.sendPersisted({ stored: null, current, error: error instanceof Error ? error.message : String(error) })
-    }
-  }
-
-  const disposers = [
-    persist.onHydrate(() => {
-      hydrating = true
-      publish()
-    }),
-    persist.onFinishHydration(() => {
-      hydrating = false
-      publish()
-    }),
-    recorder.onCommand('persist:rehydrate', () => {
-      void Promise.resolve(persist.rehydrate()).then(read, read)
-    }),
-    recorder.onCommand('persist:clear', () => {
-      persist.clearStorage()
-      void read()
-    }),
-    recorder.onCommand('persist:read', () => void read()),
-  ]
-  publish()
-
-  return {
-    get hydrating() {
-      return hydrating
+  },
+  commands: () => [
+    {
+      id: 'clear',
+      label: 'Clear storage',
+      tone: 'destructive',
+      description: 'Remove the stored value. The store keeps its current state until it is saved again.',
+      run: (persist) => persist.clearStorage(),
     },
-    dispose() {
-      for (const d of disposers) d()
+    {
+      id: 'rehydrate',
+      label: 'Rehydrate',
+      tone: 'primary',
+      description: 'Load the stored value into the store, as on page load',
+      run: (persist) => persist.rehydrate(),
     },
-  }
+  ],
 }

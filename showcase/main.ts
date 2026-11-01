@@ -1,12 +1,12 @@
 import { TanStackDevtoolsCore } from '@tanstack/devtools'
 import { zustandInspectorAstryxPlugin } from '../src/astryx'
-import { counterStore, themeStore, todosStore } from '../demo/stores'
+import { counterStore, themeStore, todosStore, votesStore } from '../demo/stores'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 
 app.innerHTML = /* html */ `
   <section class="card">
-    <h2>Counter <small>inspector()</small></h2>
+    <h2>Counter <small>immer · subscribeWithSelector</small></h2>
     <div class="row">
       <button data-action="dec" aria-label="Decrement">−</button>
       <output id="count"></output>
@@ -14,7 +14,17 @@ app.innerHTML = /* html */ `
       <button data-action="slow" title="Wakes a listener that takes about 25 ms">Slow +1</button>
       <label class="row">step <input id="step" type="number" min="1" value="1" /></label>
     </div>
-    <p class="note">"increment" is named from the calling function. "Slow +1" wakes a 25 ms listener.</p>
+    <p class="note">"increment" mutates an immer draft and is named from the calling function. "Slow +1" wakes a 25 ms listener.</p>
+  </section>
+  <section class="card">
+    <h2>Votes <small>redux()</small></h2>
+    <div class="row">
+      <button data-vote="zustand">Zustand <span class="tags" id="v-zustand"></span></button>
+      <button data-vote="jotai">Jotai <span class="tags" id="v-jotai"></span></button>
+      <button data-vote="valtio">Valtio <span class="tags" id="v-valtio"></span></button>
+      <button data-action="votes-reset">Reset</button>
+    </div>
+    <p class="note">Each click dispatches an action through a reducer. Open "redux" in the panel to dispatch one yourself.</p>
   </section>
   <section class="card">
     <h2>Todos <small id="status"></small></h2>
@@ -60,13 +70,21 @@ function renderTodos() {
     .join('')
 }
 
+function renderVotes() {
+  const votes = votesStore.getState()
+  for (const option of ['zustand', 'jotai', 'valtio'] as const) $(`#v-${option}`).textContent = String(votes[option])
+}
+
 function renderTheme() {
   const { mode } = themeStore.getState()
   $('#mode').textContent = `mode: ${mode}`
   $('#theme-card').dataset.mode = mode
 }
 
-counterStore.subscribe(renderCounter)
+// A selector subscription (subscribeWithSelector): runs only when count or step change.
+counterStore.subscribe((s) => [s.count, s.step] as const, renderCounter, {
+  equalityFn: (a, b) => a[0] === b[0] && a[1] === b[1],
+})
 // An expensive listener, so "Slow +1" shows up as a slow action.
 counterStore.subscribe((state) => {
   if (!state.heavy) return
@@ -77,7 +95,9 @@ counterStore.subscribe((state) => {
 })
 todosStore.subscribe(renderTodos)
 themeStore.subscribe(renderTheme)
+votesStore.subscribe(renderVotes)
 renderCounter()
+renderVotes()
 renderTodos()
 renderTheme()
 
@@ -92,6 +112,9 @@ app.addEventListener('click', (e) => {
   if (action === 'slow') counterStore.getState().incrementSlow()
   if (action === 'refresh') todosStore.getState().refresh()
   if (action === 'theme') themeStore.setState((s) => ({ mode: s.mode === 'dark' ? 'light' : 'dark' }))
+  if (action === 'votes-reset') votesStore.dispatch({ type: 'reset' })
+  const vote = (e.target as HTMLElement).closest<HTMLElement>('[data-vote]')?.dataset.vote
+  if (vote === 'zustand' || vote === 'jotai' || vote === 'valtio') votesStore.dispatch({ type: 'vote', option: vote })
 })
 $('#step').addEventListener('change', (e) => {
   counterStore.getState().setStep(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))

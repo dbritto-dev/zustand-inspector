@@ -4,8 +4,8 @@ import type {
   ActionMeta,
   Command,
   InspectorEvents,
-  MiddlewareInfo,
-  PersistedValue,
+  IntegrationInfo,
+  InspectedValue,
   SessionExport,
   StoreInfo,
 } from './protocol'
@@ -33,8 +33,8 @@ export interface PanelStoreData {
   dropped: number
   /** Serialized state at `currentId`. */
   state: unknown
-  /** persist, redux or devtools on this store, when the inspector recognised them. */
-  middlewares?: MiddlewareInfo
+  /** Middleware integrations found on this store (persist, redux…). */
+  integrations?: Array<IntegrationInfo>
 }
 
 export interface PanelState {
@@ -61,8 +61,10 @@ export interface PanelState {
   costFilter: CostFilter
   /** Search inside the state tree (keys and values). */
   stateSearch: string
-  /** What persist's storage held, by store id, the last time the panel asked. */
-  persisted: Record<string, PersistedValue & { readAt: number }>
+  /** Integrations' last inspected values, by `integrationKey(storeId, id)`. */
+  inspected: Record<string, { result?: InspectedValue; error?: string; readAt: number }>
+  /** The last command each integration ran, by `integrationKey(storeId, id)`. */
+  integrationResults: Record<string, { command: string; error?: string; at: number }>
 }
 
 export interface PanelModel {
@@ -94,6 +96,10 @@ export interface PanelModel {
   dispose(): void
 }
 
+export function integrationKey(storeId: string, id: string): string {
+  return `${storeId}\u0000${id}`
+}
+
 export function snapshotKey(storeId: string, id: number): string {
   return `${storeId}\u0000${id}`
 }
@@ -115,7 +121,8 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
     selectedGroup: null,
     costFilter: 'all',
     stateSearch: '',
-    persisted: {},
+    inspected: {},
+    integrationResults: {},
   }))
   const requested = new Set<string>()
   const exportListeners = new Set<(data: SessionExport) => void>()
@@ -164,8 +171,8 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
             maxHistory: info.maxHistory,
             dropped: info.dropped,
             state: info.state,
-            ...((info.middlewares ?? s.stores[info.storeId]?.middlewares)
-              ? { middlewares: info.middlewares ?? s.stores[info.storeId]?.middlewares }
+            ...((info.integrations ?? s.stores[info.storeId]?.integrations)
+              ? { integrations: info.integrations ?? s.stores[info.storeId]?.integrations }
               : {}),
           },
         },
@@ -214,10 +221,28 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
     }
   })
   on('status', (msg) => updateStore(msg.storeId, () => ({ paused: msg.paused })))
-  on('middlewares', (msg) => updateStore(msg.storeId, () => ({ middlewares: msg.middlewares })))
-  on('persisted', (msg) => {
-    const { v: _v, session: _session, storeId, ...value } = msg
-    store.setState((s) => ({ persisted: { ...s.persisted, [storeId]: { ...value, readAt: Date.now() } } }))
+  on('integrations', (msg) => updateStore(msg.storeId, () => ({ integrations: msg.integrations })))
+  on('inspected', (msg) => {
+    const key = integrationKey(msg.storeId, msg.id)
+    store.setState((s) => ({
+      inspected: {
+        ...s.inspected,
+        [key]: {
+          ...(msg.result ? { result: msg.result } : {}),
+          ...(msg.error !== undefined ? { error: msg.error } : {}),
+          readAt: Date.now(),
+        },
+      },
+    }))
+  })
+  on('integration-result', (msg) => {
+    const key = integrationKey(msg.storeId, msg.id)
+    store.setState((s) => ({
+      integrationResults: {
+        ...s.integrationResults,
+        [key]: { command: msg.command, ...(msg.error !== undefined ? { error: msg.error } : {}), at: Date.now() },
+      },
+    }))
   })
   on('snapshot', (msg) => {
     const k = snapshotKey(msg.storeId, msg.id)

@@ -18,18 +18,30 @@ function memoryStorage(initial?: Record<string, unknown>) {
 
 function listen(transport: Transport) {
   const names: Array<string> = []
-  const middlewares: Array<InspectorEvents['middlewares']['middlewares']> = []
-  const persisted: Array<InspectorEvents['persisted']> = []
-  transport.on('action', (p) => names.push(p.action.name))
-  transport.on('middlewares', (p) => middlewares.push(p.middlewares))
-  transport.on('persisted', (p) => persisted.push(p))
-  return { names, middlewares, persisted }
+  const vias: Array<string | undefined> = []
+  const integrations: Array<InspectorEvents['integrations']['integrations']> = []
+  const inspected: Array<InspectorEvents['inspected']> = []
+  const results: Array<InspectorEvents['integration-result']> = []
+  transport.on('action', (p) => {
+    names.push(p.action.name)
+    vias.push(p.action.via)
+  })
+  transport.on('integrations', (p) => integrations.push(p.integrations))
+  transport.on('inspected', (p) => inspected.push(p))
+  transport.on('integration-result', (p) => results.push(p))
+  const latest = (id: string) => integrations.at(-1)?.find((i) => i.id === id)
+  const fact = (id: string, label: string) => latest(id)?.facts?.find((f) => f.label === label)?.value
+  return { names, vias, integrations, inspected, results, latest, fact }
 }
 
 const command = (transport: Transport, storeId: string, cmd: InspectorEvents['command']['command']) =>
   transport.send('command', { ...envelope(), storeId, command: cmd })
 
 const tick = () => new Promise((r) => setTimeout(r, 0))
+const run = (transport: Transport, storeId: string, id: string, cmd: string, input?: unknown) =>
+  command(transport, storeId, { type: 'integration', id, command: cmd, ...(input !== undefined ? { input } : {}) })
+const inspect = (transport: Transport, storeId: string, id: string) =>
+  command(transport, storeId, { type: 'integration:inspect', id })
 
 type Counter = { count: number; step: number; inc: () => void }
 
@@ -60,13 +72,18 @@ describe('persist', () => {
     store.getState().inc()
     await store.persist.rehydrate()
     expect(seen.names).toEqual(['inc', 'persist/rehydrate'])
+    expect(seen.vias).toEqual([undefined, 'persist'])
   })
 
   it('reports hydration, version and persisted keys', async () => {
     const transport = createMemoryTransport()
     const seen = listen(transport)
     create(transport, memoryStorage())
-    expect(seen.middlewares.at(-1)?.persist).toEqual({ name: 'counter', version: 2, hydrated: true, keys: ['count'] })
+    expect(seen.latest('persist')?.status).toEqual({ tone: 'success', text: 'Hydrated' })
+    expect(seen.fact('persist', 'Storage key')).toBe('counter')
+    expect(seen.fact('persist', 'Version')).toBe(2)
+    expect(seen.fact('persist', 'Persisted keys')).toBe('count')
+    expect(seen.latest('persist')?.commands?.map((c) => c.id)).toEqual(['clear', 'rehydrate'])
   })
 
   it('reads, rehydrates and clears storage on command', async () => {
@@ -75,20 +92,30 @@ describe('persist', () => {
     const storage = memoryStorage()
     const store = create(transport, storage)
     store.getState().inc()
-    command(transport, 'persisted', { type: 'persist:read' })
+    inspect(transport, 'persisted', 'persist')
     await tick()
-    expect(seen.persisted.at(-1)).toMatchObject({ stored: { state: { count: 1 }, version: 2 }, current: { count: 1 } })
+    expect(seen.inspected.at(-1)?.result).toMatchObject({
+      title: 'Stored value',
+      value: { count: 1 },
+      compare: { with: { count: 1 }, label: 'the current state' },
+    })
+
+    storage.setItem('counter', JSON.stringify({ state: { count: 9 }, version: 1 }))
+    inspect(transport, 'persisted', 'persist')
+    await tick()
+    expect(seen.inspected.at(-1)?.result?.note).toMatch(/version 1.*version 2/)
 
     storage.setItem('counter', JSON.stringify({ state: { count: 9 }, version: 2 }))
-    command(transport, 'persisted', { type: 'persist:rehydrate' })
+    run(transport, 'persisted', 'persist', 'rehydrate')
     await tick()
     expect(store.getState().count).toBe(9)
     expect(seen.names.at(-1)).toBe('persist/rehydrate')
+    expect(seen.results.at(-1)).toMatchObject({ id: 'persist', command: 'rehydrate' })
 
-    command(transport, 'persisted', { type: 'persist:clear' })
+    run(transport, 'persisted', 'persist', 'clear')
     await tick()
     expect(storage.items.has('counter')).toBe(false)
-    expect(seen.persisted.at(-1)?.stored).toBeNull()
+    expect(seen.inspected.at(-1)?.result?.value).toBeNull()
   })
 
   it('waits for skipHydration stores to rehydrate', async () => {
@@ -97,11 +124,12 @@ describe('persist', () => {
     const store = create(transport, memoryStorage({ counter: { state: { count: 3 }, version: 2 } }), {
       skipHydration: true,
     })
-    expect(seen.middlewares.at(-1)?.persist).toMatchObject({ hydrated: false, skipHydration: true })
+    expect(seen.latest('persist')?.status?.tone).toBe('warning')
     store.getState().inc()
     await store.persist.rehydrate()
+    await tick()
     expect(seen.names).toEqual(['inc', 'persist/rehydrate'])
-    expect(seen.middlewares.at(-1)?.persist?.hydrated).toBe(true)
+    expect(seen.latest('persist')?.status?.tone).toBe('success')
   })
 
   it('still records rehydration when persist wraps the inspector', async () => {
@@ -120,7 +148,7 @@ describe('persist', () => {
     store.getState().inc()
     await tick()
     expect(seen.names).toEqual(['persist/rehydrate', 'inc'])
-    expect(seen.middlewares.at(-1)?.persist?.name).toBe('outer')
+    expect(seen.fact('persist', 'Storage key')).toBe('outer')
   })
 })
 
@@ -152,9 +180,10 @@ describe('other built-in middlewares', () => {
     store.getState().add(2)
     expect(seen.names).toEqual(['inc', 'add'])
     expect(store.getState().count).toBe(3)
+    expect(seen.latest('immer')).toMatchObject({ label: 'immer' })
   })
 
-  it('redux: dispatched actions keep their type and payload, and redux is reported', () => {
+  it('redux: dispatched actions keep their type and payload, and redux is reported', async () => {
     const transport = createMemoryTransport()
     const seen = listen(transport)
     const payloads: Array<unknown> = []
@@ -170,10 +199,22 @@ describe('other built-in middlewares', () => {
     store.dispatch({ type: 'inc', by: 2 })
     expect(seen.names).toEqual(['inc'])
     expect(payloads).toEqual([{ by: 2 }])
-    expect(seen.middlewares.at(-1)).toEqual({ redux: true })
+    await tick()
+    expect(seen.fact('redux', 'Dispatched')).toBe(1)
+    expect(seen.fact('redux', 'Action types')).toBe('inc')
+
+    run(transport, 'redux', 'redux', 'dispatch', { type: 'inc', by: 3 })
+    await tick()
+    expect(store.getState().count).toBe(5)
+    expect(seen.names.at(-1)).toBe('inc')
+    expect(seen.latest('redux')?.commands?.[0]?.input?.placeholder).toBe('{"type":"inc","by":3}')
+
+    run(transport, 'redux', 'redux', 'dispatch', { by: 1 })
+    await tick()
+    expect(seen.results.at(-1)?.error).toMatch(/string "type"/)
   })
 
-  it('subscribeWithSelector and combine keep names and listener counts', () => {
+  it('subscribeWithSelector and combine keep names and listener counts', async () => {
     const transport = createMemoryTransport()
     const listeners: Array<number | undefined> = []
     const seen = listen(transport)
@@ -187,10 +228,20 @@ describe('other built-in middlewares', () => {
       ),
     )
     store.subscribe((s) => s.count, () => {})
-    store.subscribe((s) => s.other, () => {})
+    store.subscribe((s) => s.other, () => {}, { fireImmediately: true })
     store.getState().inc()
     expect(seen.names).toEqual(['inc'])
     expect(listeners).toEqual([2])
+
+    await tick()
+    expect(seen.fact('subscribeWithSelector', 'Selector subscriptions')).toBe(2)
+    inspect(transport, 'sws', 'subscribeWithSelector')
+    await tick()
+    const rows = seen.inspected.at(-1)?.result?.rows
+    expect(rows?.map((r) => [r.title, r.detail, r.meta])).toEqual([
+      ['(s) => s.count', 'Object.is', 'fired 1 time, last on #2'],
+      ['(s) => s.other', 'Object.is · fireImmediately', 'fired 1 time, on subscribe'],
+    ])
   })
 
   it('devtools: reported when it wraps the inspector', async () => {
@@ -207,7 +258,7 @@ describe('other built-in middlewares', () => {
     await tick()
     delete g.window.__REDUX_DEVTOOLS_EXTENSION__
     if (!hadWindow) delete g.window
-    expect(seen.middlewares.at(-1)).toEqual({ devtools: true })
+    expect(seen.integrations.at(-1)?.map((i) => i.id)).toEqual(['devtools'])
   })
 })
 
@@ -221,12 +272,36 @@ describe('inspectStore with persist', () => {
       persist(() => ({ mode: 'dark' }), { name: 'theme', storage: createJSONStorage(() => storage) }),
     )
     const stop = inspectStore(store, { name: 'theme-store', transport })
-    expect(seen.middlewares.at(-1)?.persist).toMatchObject({ name: 'theme', hydrated: true, keys: ['mode'] })
+    expect(seen.fact('persist', 'Persisted keys')).toBe('mode')
     store.setState({ mode: 'dark' })
     storage.setItem('theme', JSON.stringify({ state: { mode: 'light' }, version: 0 }))
     await store.persist.rehydrate()
     expect(seen.names).toEqual(['setState', 'persist/rehydrate'])
     expect(store.getState().mode).toBe('light')
     stop()
+  })
+})
+
+describe('name inference through wrappers', () => {
+  it('skips a bundled setState wrapper (immer) to reach the action', async () => {
+    const { inferCallerName } = await import('../src')
+    const stack = [
+      'Error',
+      '    at namedSet (http://localhost/assets/index.js:1:100)',
+      '    at store.setState (http://localhost/assets/index.js:1:200)',
+      '    at Object.increment (http://localhost/assets/index.js:1:300)',
+    ].join('\n')
+    expect(inferCallerName(stack)).toBe('increment')
+  })
+
+  it('skips Vite prebundled middleware frames', async () => {
+    const { inferCallerName } = await import('../src')
+    const stack = [
+      'Error',
+      '    at namedSet (http://localhost:5173/src/middleware.ts:10:1)',
+      '    at http://localhost:5173/node_modules/.vite/deps/zustand_middleware.js?v=1:300:5',
+      '    at Object.addTodo (http://localhost:5173/src/store.ts:12:3)',
+    ].join('\n')
+    expect(inferCallerName(stack)).toBe('addTodo')
   })
 })

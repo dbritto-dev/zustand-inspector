@@ -120,13 +120,24 @@ Put `inspector` outermost, the same place Zustand's docs put `devtools`:
 createStore<State>()(inspector(persist(immer((set) => ({ … })), { name: 'cart' }), { name: 'cart' }))
 ```
 
-- **`persist`.** A "persist" button in the toolbar opens the store's storage. It shows the key, the version, whether the store has hydrated, which keys `partialize` keeps, and the stored value. It also says whether storage matches the current state, and if not, what differs. Buttons rehydrate from storage or clear it, and both are in the toolbar's menu too. Rehydration is recorded as `persist/rehydrate`, including with `skipHydration` and async storage. A stored version that differs from the store's version is flagged, because `migrate` will run on the next rehydrate.
-- **`immer`, `redux`, `subscribeWithSelector`, `combine`.** These work unchanged. Names are still inferred through the `persist` and `immer` wrappers, and `redux` actions keep their `type` and payload from `dispatch`. Listener counts include `subscribeWithSelector` subscriptions.
-- **`devtools`.** It can sit on the same store; the toolbar marks stores that have it, and `redux` stores are marked too.
-- **Order mistakes are caught.** If a middleware wraps the inspector (`persist(inspector(…))`), its own writes skip `inspector`'s `set`. The inspector still records them, as `persist/rehydrate` or `setState (outside inspector)`, and still finds `persist`.
-- **`inspectStore`** connects `persist` the same way.
+Each middleware the inspector recognises gets a button in the toolbar (an icon below 560px) that opens its dialog, or a small marker when there's nothing more to show. The dialogs are also in the toolbar's menu.
 
-Name inference skips frames from `node_modules` and Vite's prebundled deps, which is what dev servers serve. In a build that bundles Zustand into the same file as your code, pass action names explicitly when using `persist` or `immer`.
+- **`persist`.** The dialog shows:
+  - whether the store has hydrated, the storage key, the version, and the keys `partialize` keeps;
+  - the stored value, and whether it matches the current state (if not, what differs);
+  - a note when the stored version differs from the store's, because `migrate` will run on the next rehydrate.
+
+  Buttons rehydrate from storage or clear it. Rehydration is recorded as `persist/rehydrate`, including with `skipHydration` and async storage.
+- **`redux`.** The dialog shows how many actions were dispatched and their types, and has a **Dispatch** box: type an action as JSON and run it through the reducer. The last dispatched action is the placeholder. Dispatched actions keep their `type` and payload in the action list.
+- **`subscribeWithSelector`.** The "subscriptions" dialog lists every selector subscription with its selector, its equality function, `fireImmediately`, how many times its listener fired, and on which action it last did. Listener counts in the cost data include these subscriptions.
+- **`immer`** and **`devtools`** get a marker. Names are still inferred through immer's `setState` wrapper, even when it's bundled into the app. `immer` is detected from the wrapper's source, so only in unminified builds.
+- **`combine`** leaves no trace on the store, so there's nothing to detect.
+- **Order mistakes are caught.** If a middleware wraps the inspector (`persist(inspector(…))`), its own writes skip `inspector`'s `set`. The inspector still records them, as `persist/rehydrate` or `setState (outside inspector)`, and still finds the middleware.
+- **`inspectStore`** finds the same middlewares.
+
+These are built on an integration API (`InspectorIntegration`, experimental) that any middleware can implement: `detect` it on the store, describe its `status` and `facts`, `inspect` what it holds, offer `commands`, and name the `set()` calls it makes (`writing`). Pass `integrations: [...builtInIntegrations, mine]` to `inspector` or `inspectStore`.
+
+Name inference skips frames from `node_modules` and Vite's prebundled deps, which is what dev servers serve, and wrappers named `setState`. In a build that bundles Zustand into the same file as your code, pass action names explicitly when using `persist`.
 
 For a store you can't wrap (for example a third-party one), use `inspectStore`. It records every change as `setState` and still supports time travel:
 
