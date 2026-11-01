@@ -1,5 +1,5 @@
 import { TanStackDevtoolsCore } from '@tanstack/devtools'
-import { zustandInspectorPlugin } from '../src/panel'
+import { zustandInspectorAstryxPlugin } from '../src/astryx'
 import { counterStore, themeStore, todosStore } from '../demo/stores'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
@@ -108,7 +108,7 @@ const host = document.createElement('div')
 document.body.appendChild(host)
 new TanStackDevtoolsCore({
   config: { defaultOpen: true, theme: prefersDark() ? 'dark' : 'light' },
-  plugins: [zustandInspectorPlugin({ defaultOpen: true })],
+  plugins: [zustandInspectorAstryxPlugin({ defaultOpen: true })],
 }).mount(host)
 
 // The strip under the TanStack header lists *closed* plugins. Ours is the only

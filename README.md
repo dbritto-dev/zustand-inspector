@@ -47,6 +47,32 @@ if (import.meta.env.DEV) {
 
 If you already use a framework adapter such as `@tanstack/react-devtools`, pass the same plugin object to its `plugins` array.
 
+### Astryx panel
+
+`zustand-inspector/astryx` is the same plugin with a UI built from [Astryx](https://astryx.atmeta.com), Meta's design system. Your stores stay plain Zustand: React and Astryx only run inside the devtools pane, in a shadow root, so neither Astryx's reset nor your app's CSS can reach the other side.
+
+```bash
+npm i -D react react-dom @astryxdesign/core @astryxdesign/theme-neutral @stylexjs/stylex lucide-react
+```
+
+```ts
+const { zustandInspectorAstryxPlugin } = await import('zustand-inspector/astryx')
+new TanStackDevtoolsCore({ plugins: [zustandInspectorAstryxPlugin()] }).mount(host)
+```
+
+Options:
+- `astryxTheme: { theme, css }` takes any built Astryx theme so the devtools match your app.
+- `loadFonts: true` loads the theme's web font from Google Fonts at page level.
+
+What it adds over the plain panel:
+- a resizable action list whose width is remembered;
+- an import dialog with a drop zone;
+- below 720px the detail opens in a drawer.
+
+Two build notes:
+- **CSS target.** Astryx colors rely on CSS `light-dark()`, so a bundler's `build.cssTarget` must be at least Chrome 123 / Safari 17.5 / Firefox 120. Older targets rewrite every theme color into a fallback that only works in dark mode.
+- **Root sync.** Astryx's `<Theme>` normally writes `data-theme` onto your `<html>`. The panel uses its own theme root, so your page is never touched.
+
 For a store you can't wrap (for example a third-party one), use `inspectStore`. It records every change as `setState` and still supports time travel:
 
 ```ts
@@ -111,7 +137,8 @@ Ideas borrowed (see the research report):
 ```bash
 npm install
 npm run dev          # demo at http://localhost:5173 (?devtoolsDelay=3000 to test late mount)
-npm test             # vitest: recorder + panel (jsdom)
+npm test             # vitest: recorder, panel model, plain panel (jsdom)
+npm run astryx -- doctor --built src/astryx   # Astryx usage check for the Astryx panel
 npm run typecheck
 npm run build        # dist/ (ESM) + dist/types
 ```
