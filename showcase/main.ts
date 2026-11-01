@@ -24,7 +24,7 @@ app.innerHTML = /* html */ `
       <button data-vote="valtio">Valtio <span class="tags" id="v-valtio"></span></button>
       <button data-action="votes-reset">Reset</button>
     </div>
-    <p class="note">Each click dispatches an action through a reducer. Open "redux" in the panel to dispatch one yourself.</p>
+    <p class="note">Each click dispatches an action through a reducer. In the panel, open Middlewares → redux to dispatch one yourself.</p>
   </section>
   <section class="card">
     <h2>Todos <small id="status"></small></h2>
@@ -45,7 +45,7 @@ app.innerHTML = /* html */ `
       <button data-action="theme">Toggle mode</button>
       <span class="pill" id="mode"></span>
     </div>
-    <p class="note">A store created without the inspector middleware, with <code>persist</code>: the mode survives a reload. Open "persist" in the panel to see the storage.</p>
+    <p class="note">A store created without the inspector middleware, with <code>persist</code>: the mode survives a reload. In the panel, open Middlewares → persist to see the storage.</p>
   </section>
 `
 

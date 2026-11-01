@@ -29,7 +29,7 @@ import { Section } from '@astryxdesign/core/Section'
 import { Banner } from '@astryxdesign/core/Banner'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { ToggleButton, ToggleButtonGroup } from '@astryxdesign/core/ToggleButton'
-import { ChevronDown, ChevronRight, CircleDot, HardDrive, Hourglass, ListTree, Plug, RefreshCw, Send, SkipBack, StepBack, StepForward, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, CircleDot, Layers, PenLine, Wrench, HardDrive, ListTree, Plug, RefreshCw, Send, SkipBack, StepBack, StepForward, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import { formatPath } from '../diff'
@@ -198,9 +198,9 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
   const filter = useStore(model.store, (s) => s.filter)
   const showFunctions = useStore(model.store, (s) => s.showFunctions)
   const [importOpen, setImportOpen] = useState(false)
-  const [openIntegration, setOpenIntegration] = useState<string | null>(null)
+  // null: closed; '': the middleware list; an id: that middleware's details.
+  const [middlewaresView, setMiddlewaresView] = useState<string | null>(null)
   const integrations = data.integrations ?? []
-  const withContent = integrations.filter(hasContent)
   const status = statusOf(data)
   const currentSize = data.actions.find((a) => a.id === data.currentId)?.cost?.stateSize
 
@@ -237,7 +237,7 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
               options={order.map((id) => ({
                 value: id,
                 label: stores[id]?.name ?? id,
-                description: `${stores[id]?.actions.length ?? 0} actions`,
+                description: storeDescription(stores[id]),
               }))}
               onChange={(value) => value && model.selectStore(value)}
             />
@@ -255,24 +255,13 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
                 </Text>
               </Tooltip>
             ) : null}
-            {integrations.map((integration) =>
-              hasContent(integration) ? (
-                <IntegrationButton
-                  key={integration.id}
-                  integration={integration}
-                  compact={compact}
-                  onOpen={() => setOpenIntegration(integration.id)}
-                />
-              ) : compact ? null : (
-                <Token
-                  key={integration.id}
-                  label={integration.label}
-                  size="sm"
-                  color="gray"
-                  description={integration.description ?? integration.label}
-                />
-              ),
-            )}
+            {integrations.length > 0 ? (
+              <MiddlewaresButton
+                integrations={integrations}
+                compact={compact}
+                onOpen={() => setMiddlewaresView('')}
+              />
+            ) : null}
           </>
         }
         endContent={
@@ -313,12 +302,16 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
                   description: 'Load state from an exported file',
                   onClick: () => setImportOpen(true),
                 },
-                ...(withContent.length > 0 ? [{ type: 'divider' as const }] : []),
-                ...withContent.map((integration) => ({
-                  label: `${integration.label}…`,
-                  description: integration.status?.text ?? integration.description ?? 'Middleware',
-                  onClick: () => setOpenIntegration(integration.id),
-                })),
+                ...(integrations.length > 0
+                  ? [
+                      { type: 'divider' as const },
+                      {
+                        label: 'Middlewares…',
+                        description: integrations.map((i) => i.label).join(', '),
+                        onClick: () => setMiddlewaresView(''),
+                      },
+                    ]
+                  : []),
               ]}
             />
           </>
@@ -331,16 +324,15 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
       ) : null}
       <Scrubber model={model} data={data} compact={compact} />
       <ImportDialog model={model} storeName={data.name} isOpen={importOpen} onOpenChange={setImportOpen} />
-      {withContent.map((integration) => (
-        <IntegrationDialog
-          key={integration.id}
+      {integrations.length > 0 ? (
+        <MiddlewaresDialog
           model={model}
           data={data}
-          integration={integration}
-          isOpen={openIntegration === integration.id}
-          onOpenChange={(open) => setOpenIntegration(open ? integration.id : null)}
+          integrations={integrations}
+          view={middlewaresView}
+          onViewChange={setMiddlewaresView}
         />
-      ))}
+      ) : null}
     </VStack>
   )
 }
@@ -350,113 +342,200 @@ function hasContent(integration: IntegrationInfo): boolean {
   return !!(integration.status || integration.facts?.length || integration.commands?.length || integration.inspectable)
 }
 
-const INTEGRATION_ICONS = { storage: HardDrive, dispatch: Send, subscriptions: ListTree, plug: Plug } as const
+const INTEGRATION_ICONS = {
+  storage: HardDrive,
+  dispatch: Send,
+  subscriptions: ListTree,
+  draft: PenLine,
+  devtools: Wrench,
+  plug: Plug,
+} as const
 
 const TONE_DOT = { success: 'success', warning: 'warning', error: 'error', info: 'accent' } as const
 
-function IntegrationButton({
-  integration,
+/** The store selector's second line: action count and middlewares. */
+function storeDescription(store: PanelStoreData | undefined): string {
+  const count = store?.actions.length ?? 0
+  const actions = `${count} action${count === 1 ? '' : 's'}`
+  const names = store?.integrations?.map((i) => i.label) ?? []
+  return names.length > 0 ? `${actions} · ${names.join(', ')}` : actions
+}
+
+/** The most urgent status among the middlewares, for the toolbar dot. */
+function worstStatus(integrations: ReadonlyArray<IntegrationInfo>): IntegrationInfo['status'] {
+  const rank = { error: 3, warning: 2, info: 1, success: 0 } as const
+  let worst: IntegrationInfo['status']
+  for (const i of integrations) {
+    if (i.status && (!worst || rank[i.status.tone] > rank[worst.tone])) worst = i.status
+  }
+  return worst && worst.tone !== 'success' ? worst : undefined
+}
+
+function MiddlewaresButton({
+  integrations,
   compact,
   onOpen,
 }: {
-  integration: IntegrationInfo
+  integrations: ReadonlyArray<IntegrationInfo>
   compact: boolean
   onOpen: () => void
 }) {
-  const status = integration.status
-  const busy = status?.tone === 'info'
-  const icon = busy ? Hourglass : INTEGRATION_ICONS[integration.icon ?? 'plug']
+  const status = worstStatus(integrations)
+  const names = integrations.map((i) => i.label).join(', ')
   return (
-    <HStack gap={0.5} vAlign="center">
+    <HStack gap={1} vAlign="center">
       <Button
-        label={integration.label}
+        label="Middlewares"
         size="sm"
         variant="ghost"
         isIconOnly={compact}
-        icon={<Icon icon={icon} />}
-        tooltip={[integration.label, status?.text ?? integration.description].filter(Boolean).join(': ')}
+        icon={<Icon icon={Layers} />}
+        tooltip={`Middlewares on this store: ${names}`}
         onClick={onOpen}
       />
-      {status && status.tone !== 'success' ? (
-        <StatusDot variant={TONE_DOT[status.tone]} label={status.text} tooltip={status.text} />
-      ) : null}
+      <Badge label={String(integrations.length)} />
+      {status ? <StatusDot variant={TONE_DOT[status.tone]} label={status.text} tooltip={status.text} /> : null}
     </HStack>
   )
 }
 
-function IntegrationDialog({
+/**
+ * Every middleware found on the store, each with what it is and its status;
+ * one click opens its details (facts, what it holds, commands).
+ */
+function MiddlewaresDialog({
+  model,
+  data,
+  integrations,
+  view,
+  onViewChange,
+}: {
+  model: PanelModel
+  data: PanelStoreData
+  integrations: ReadonlyArray<IntegrationInfo>
+  view: string | null
+  onViewChange: (view: string | null) => void
+}) {
+  const selected = view ? integrations.find((i) => i.id === view) : undefined
+  const close = (open: boolean) => {
+    if (!open) onViewChange(null)
+  }
+  return (
+    <Dialog isOpen={view !== null} onOpenChange={close} width={580}>
+      <Layout
+        header={
+          <DialogHeader
+            title={selected ? selected.label : 'Middlewares'}
+            subtitle={selected ? `Middleware on the "${data.name}" store` : `Found on the "${data.name}" store`}
+            onOpenChange={close}
+          />
+        }
+        content={
+          <LayoutContent>
+            {selected ? (
+              <VStack gap={3}>
+                <HStack>
+                  <Button
+                    label="All middlewares"
+                    size="sm"
+                    variant="ghost"
+                    icon={<Icon icon={ChevronLeft} />}
+                    onClick={() => onViewChange('')}
+                  />
+                </HStack>
+                <IntegrationDetails model={model} data={data} integration={selected} />
+              </VStack>
+            ) : (
+              <VStack gap={3}>
+                <List density="compact" hasDividers edge="flush">
+                  {integrations.map((integration) => {
+                    const icon = INTEGRATION_ICONS[integration.icon ?? 'plug']
+                    const details = hasContent(integration)
+                    return (
+                      <ListItem
+                        key={integration.id}
+                        align="first-line"
+                        onClick={details ? () => onViewChange(integration.id) : undefined}
+                        startContent={<Icon icon={icon} color="secondary" />}
+                        label={
+                          <HStack gap={2} vAlign="center">
+                            <Text type="code" weight="semibold">
+                              {integration.label}
+                            </Text>
+                            {integration.status ? (
+                              <HStack gap={1} vAlign="center">
+                                <StatusDot variant={TONE_DOT[integration.status.tone]} label={integration.status.text} />
+                                <Text type="supporting" maxLines={1}>
+                                  {integration.status.text}
+                                </Text>
+                              </HStack>
+                            ) : null}
+                          </HStack>
+                        }
+                        description={integration.description ? <Text type="supporting">{integration.description}</Text> : undefined}
+                        endContent={
+                          details ? <Icon icon={ChevronRight} color="secondary" /> : <Text type="supporting">No details</Text>
+                        }
+                      />
+                    )
+                  })}
+                </List>
+                <Text type="supporting">
+                  Found by looking at the store. combine leaves no trace, so it never shows here.
+                </Text>
+              </VStack>
+            )}
+          </LayoutContent>
+        }
+      />
+    </Dialog>
+  )
+}
+
+function IntegrationDetails({
   model,
   data,
   integration,
-  isOpen,
-  onOpenChange,
 }: {
   model: PanelModel
   data: PanelStoreData
   integration: IntegrationInfo
-  isOpen: boolean
-  onOpenChange: (open: boolean) => void
 }) {
   const key = integrationKey(data.storeId, integration.id)
   const inspected = useStore(model.store, (s) => s.inspected[key])
   const lastResult = useStore(model.store, (s) => s.integrationResults[key])
   const inspect = () => model.command({ type: 'integration:inspect', id: integration.id })
-  // Inspect when the dialog opens and after every action: what a middleware
+  // Inspect when the details open and after every action: what a middleware
   // holds (persist's storage, subscriptions) follows the store.
   useEffect(() => {
-    if (isOpen && integration.inspectable) inspect()
-  }, [isOpen, integration.inspectable, data.currentId])
+    if (integration.inspectable) inspect()
+  }, [integration.id, integration.inspectable, data.currentId])
 
   return (
-    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={560}>
-      <Layout
-        header={
-          <DialogHeader
-            title={integration.label}
-            subtitle={`Middleware on the "${data.name}" store`}
-            onOpenChange={onOpenChange}
-          />
-        }
-        content={
-          <LayoutContent>
-            <VStack gap={4}>
-              {integration.description ? <Text type="supporting">{integration.description}</Text> : null}
-              {integration.status || integration.facts?.length ? (
-                <MetadataList label={{ width: 148 }}>
-                  {integration.status ? (
-                    <MetadataListItem label="Status">
-                      <HStack gap={1.5} vAlign="center">
-                        <StatusDot variant={TONE_DOT[integration.status.tone]} label={integration.status.text} />
-                        <Text>{integration.status.text}</Text>
-                      </HStack>
-                    </MetadataListItem>
-                  ) : null}
-                  {integration.facts?.map((fact) => (
-                    <MetadataListItem key={fact.label} label={fact.label}>
-                      {typeof fact.value === 'string' ? (
-                        <Text type="code">{fact.value}</Text>
-                      ) : (
-                        <ValueText value={fact.value} />
-                      )}
-                    </MetadataListItem>
-                  ))}
-                </MetadataList>
-              ) : null}
-              {integration.inspectable ? (
-                <InspectedSection inspected={inspected} onRefresh={inspect} />
-              ) : null}
-              {integration.commands?.length ? (
-                <IntegrationCommands
-                  model={model}
-                  integration={integration}
-                  lastResult={lastResult}
-                />
-              ) : null}
-            </VStack>
-          </LayoutContent>
-        }
-      />
-    </Dialog>
+    <VStack gap={4}>
+      {integration.description ? <Text type="supporting">{integration.description}</Text> : null}
+      {integration.status || integration.facts?.length ? (
+        <MetadataList label={{ width: 148 }}>
+          {integration.status ? (
+            <MetadataListItem label="Status">
+              <HStack gap={1.5} vAlign="center">
+                <StatusDot variant={TONE_DOT[integration.status.tone]} label={integration.status.text} />
+                <Text>{integration.status.text}</Text>
+              </HStack>
+            </MetadataListItem>
+          ) : null}
+          {integration.facts?.map((fact) => (
+            <MetadataListItem key={fact.label} label={fact.label}>
+              {typeof fact.value === 'string' ? <Text type="code">{fact.value}</Text> : <ValueText value={fact.value} />}
+            </MetadataListItem>
+          ))}
+        </MetadataList>
+      ) : null}
+      {integration.inspectable ? <InspectedSection inspected={inspected} onRefresh={inspect} /> : null}
+      {integration.commands?.length ? (
+        <IntegrationCommands model={model} integration={integration} lastResult={lastResult} />
+      ) : null}
+    </VStack>
   )
 }
 

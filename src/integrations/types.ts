@@ -6,7 +6,7 @@ import type { StoreApi } from 'zustand/vanilla'
  * `set()` calls they make. Experimental: the shape may still change.
  */
 
-export type IntegrationIcon = 'storage' | 'dispatch' | 'subscriptions' | 'plug'
+export type IntegrationIcon = 'storage' | 'dispatch' | 'subscriptions' | 'draft' | 'devtools' | 'plug'
 
 export interface IntegrationStatus {
   tone: 'success' | 'warning' | 'error' | 'info'

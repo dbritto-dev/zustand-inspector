@@ -38,10 +38,9 @@ function sourceOf(fn: unknown, max = 90): string {
  */
 export const subscribeWithSelectorIntegration: InspectorIntegration<StoreApi<any>> = {
   id: 'subscribeWithSelector',
-  label: 'subscriptions',
+  label: 'subscribeWithSelector',
   icon: 'subscriptions',
-  description:
-    'subscribeWithSelector: listeners that run only when their selected slice changes, by the equality function.',
+  description: 'Lets listeners subscribe to one slice of state and run only when that slice changes.',
   // Zustand's own subscribe takes one argument; subscribeWithSelector's takes three.
   detect: (api) => (api.subscribe.length >= 2 ? api : undefined),
   setup(api, ctx) {

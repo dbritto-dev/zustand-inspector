@@ -109,17 +109,20 @@ export function mountAstryxInspector(
 
   // TanStack Devtools closes the whole pane on Escape (a window listener). When
   // Escape is meant for one of the panel's overlays (a dialog, menu or drawer),
-  // keep it inside: check before the overlay closes, stop it on the way out.
+  // keep it from reaching the window. Focus may be inside the panel or, after a
+  // button inside a dialog unmounts, on the page body, so this listens at the
+  // top: note the overlay before it closes (window, capture), then stop the
+  // event at the document on its way back up, after the overlay has handled it.
   const escapes = new WeakSet<Event>()
   const OVERLAY = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], dialog[open]'
-  const markEscape = (e: Event) => {
-    if ((e as KeyboardEvent).key === 'Escape' && shadow.querySelector(OVERLAY)) escapes.add(e)
+  const markEscape = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && shadow.querySelector(OVERLAY)) escapes.add(e)
   }
-  const keepEscape = (e: Event) => {
+  const keepEscape = (e: KeyboardEvent) => {
     if (escapes.has(e)) e.stopPropagation()
   }
-  shadow.addEventListener('keydown', markEscape, true)
-  shadowHost.addEventListener('keydown', keepEscape)
+  window.addEventListener('keydown', markEscape, true)
+  document.addEventListener('keydown', keepEscape)
 
   return {
     model,
@@ -133,8 +136,8 @@ export function mountAstryxInspector(
       mounted = false
       observer?.disconnect()
       window.removeEventListener('keydown', onKeyDown, true)
-      shadow.removeEventListener('keydown', markEscape, true)
-      shadowHost.removeEventListener('keydown', keepEscape)
+      window.removeEventListener('keydown', markEscape, true)
+      document.removeEventListener('keydown', keepEscape)
       root.unmount()
       model.dispose()
       shadowHost.remove()

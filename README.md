@@ -120,7 +120,7 @@ Put `inspector` outermost, the same place Zustand's docs put `devtools`:
 createStore<State>()(inspector(persist(immer((set) => ({ … })), { name: 'cart' }), { name: 'cart' }))
 ```
 
-Each middleware the inspector recognises gets a button in the toolbar (an icon below 560px) that opens its dialog, or a small marker when there's nothing more to show. The dialogs are also in the toolbar's menu.
+The toolbar's **Middlewares** button (with a count, and a dot when one needs attention, such as `persist` still hydrating) lists the middlewares found on the store, each by its real name with one line on what it does and its status. Click one for its details. The store selector lists each store's middlewares too.
 
 - **`persist`.** The dialog shows:
   - whether the store has hydrated, the storage key, the version, and the keys `partialize` keeps;

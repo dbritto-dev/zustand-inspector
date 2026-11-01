@@ -4,7 +4,8 @@ import type { InspectorIntegration } from './types'
 export const devtoolsIntegration: InspectorIntegration<true> = {
   id: 'devtools',
   label: 'devtools',
-  description: "Redux DevTools' devtools middleware records this store as well.",
+  icon: 'devtools',
+  description: 'Also sends this store to the Redux DevTools browser extension.',
   detect: (api) => (api as unknown as { devtools?: unknown }).devtools !== undefined || undefined,
 }
 
@@ -15,7 +16,8 @@ export const devtoolsIntegration: InspectorIntegration<true> = {
 export const immerIntegration: InspectorIntegration<true> = {
   id: 'immer',
   label: 'immer',
-  description: 'The immer middleware: set() takes draft updaters, and state is produced immutably.',
+  icon: 'draft',
+  description: 'Lets actions update state by mutating a draft, which immer turns into a new state.',
   detect(api) {
     try {
       return /\bproduce\(/.test(Function.prototype.toString.call(api.setState)) || undefined

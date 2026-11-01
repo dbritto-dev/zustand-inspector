@@ -65,7 +65,7 @@ export interface ActionMeta {
 export interface IntegrationInfo {
   id: string
   label: string
-  icon?: 'storage' | 'dispatch' | 'subscriptions' | 'plug'
+  icon?: 'storage' | 'dispatch' | 'subscriptions' | 'draft' | 'devtools' | 'plug'
   description?: string
   status?: { tone: 'success' | 'warning' | 'error' | 'info'; text: string }
   facts?: Array<{ label: string; value: Serialized }>

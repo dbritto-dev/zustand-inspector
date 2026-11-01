@@ -43,6 +43,7 @@ export const persistIntegration: InspectorIntegration<PersistApi> = {
   id: 'persist',
   label: 'persist',
   icon: 'storage',
+  description: 'Saves state to storage (localStorage by default) and restores it when the page loads.',
   detect(api) {
     const persist = (api as { persist?: Partial<PersistApi> }).persist
     return persist && typeof persist.getOptions === 'function' && typeof persist.hasHydrated === 'function'

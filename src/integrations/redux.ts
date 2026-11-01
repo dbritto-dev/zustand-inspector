@@ -12,7 +12,7 @@ export const reduxIntegration: InspectorIntegration<ReduxApi> = {
   id: 'redux',
   label: 'redux',
   icon: 'dispatch',
-  description: 'Actions come from the redux middleware: dispatch(action) runs the reducer and keeps its type and payload.',
+  description: 'Updates state Redux-style: dispatch(action) runs a reducer. Actions keep their type and payload.',
   detect: (api) => {
     const a = api as unknown as Record<string, unknown>
     return typeof a.dispatch === 'function' && 'dispatchFromDevtools' in a ? (api as unknown as ReduxApi) : undefined
