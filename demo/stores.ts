@@ -7,6 +7,9 @@ export type CounterState = {
   increment: () => void
   decrement: () => void
   setStep: (step: number) => void
+  /** Like increment, but wakes an expensive listener (see the showcase). */
+  incrementSlow: () => void
+  heavy: boolean
 }
 
 // Action names come from the third `set` argument, or are inferred from the caller.
@@ -15,9 +18,11 @@ export const counterStore = createStore<CounterState>()(
     (set) => ({
       count: 0,
       step: 1,
-      increment: () => set((s) => ({ count: s.count + s.step })), // name inferred: "increment"
+      heavy: false,
+      increment: () => set((s) => ({ count: s.count + s.step, heavy: false })), // name inferred: "increment"
       decrement: () => set((s) => ({ count: s.count - s.step }), false, 'decrement'),
       setStep: (step) => set({ step }, false, { type: 'setStep', step }),
+      incrementSlow: () => set((s) => ({ count: s.count + s.step, heavy: true }), false, 'incrementSlow'),
     }),
     { name: 'counter' },
   ),
@@ -33,6 +38,8 @@ export type TodosState = {
   add: (title: string) => void
   toggle: (id: string) => void
   tag: (tag: string) => void
+  /** Copies the Map without changing anything: a wasted update on purpose. */
+  refresh: () => void
   load: () => Promise<void>
 }
 
@@ -70,6 +77,7 @@ export const todosStore = createStore<TodosState>()(
           { type: 'todos/toggle', id },
         ),
       tag: (tag) => set((s) => ({ tags: new Set(s.tags).add(tag) }), false, 'tags/add'),
+      refresh: () => set((s) => ({ todos: new Map(s.todos) }), false, 'todos/refresh'),
       load: async () => {
         set({ status: 'loading' }, false, 'todos/load:pending')
         await new Promise((r) => setTimeout(r, 400))

@@ -239,6 +239,80 @@ describe('branching while time travelling', () => {
   })
 })
 
+describe('action cost', () => {
+  type S = { items: Array<number>; user: { name: string; token: string }; n: number }
+  const make = (transport = createMemoryTransport(), extra: Record<string, unknown> = {}) =>
+    createStore<S>()(
+      inspector(() => ({ items: [1, 2], user: { name: 'a', token: 't1' }, n: 0 }), {
+        name: 'cost',
+        transport,
+        ...extra,
+      }),
+    )
+  const last = () => getRecorders()[0].actions.at(-1)!
+
+  it('times set() and counts the listeners it notified', () => {
+    const store = make()
+    const off1 = store.subscribe(() => {})
+    const off2 = store.subscribe(() => {})
+    store.setState({ n: 1 }, false, 'bump')
+    expect(last().cost?.listeners).toBe(2)
+    expect(last().cost?.durationMs).toBeGreaterThanOrEqual(0)
+    expect(last().cost?.stateSize).toBeGreaterThan(10)
+    off1()
+    off1() // unsubscribing twice does not undercount
+    store.setState({ n: 2 }, false, 'bump')
+    expect(last().cost?.listeners).toBe(1)
+    off2()
+  })
+
+  it('reports zero listeners when set() keeps the same state object', () => {
+    const store = make()
+    store.subscribe(() => {})
+    store.setState((s) => s, false, 'same')
+    expect(last().cost?.listeners).toBe(0)
+    expect(last().cost?.noop).toBeUndefined()
+  })
+
+  it('flags a no-op update and same-value references', () => {
+    const store = make()
+    store.setState((s) => ({ items: [...s.items] }), false, 'copy items')
+    expect(last().changes).toEqual([])
+    expect(last().cost?.noop).toBe(true)
+    expect(last().cost?.sameValueKeys).toEqual(['items'])
+
+    store.setState((s) => ({ items: [...s.items], n: s.n + 1 }), false, 'copy and bump')
+    expect(last().cost?.noop).toBeUndefined()
+    expect(last().cost?.sameValueKeys).toEqual(['items'])
+  })
+
+  it('does not call a redacted change a same-value update', () => {
+    const store = make()
+    store.setState((s) => ({ user: { ...s.user, token: 't2' } }), false, 'rotate token')
+    // Both sides serialize to the same redacted placeholder, so it proves nothing.
+    expect(last().cost?.sameValueKeys).toBeUndefined()
+  })
+
+  it('adds timed actions to a Performance panel track unless disabled', () => {
+    const calls: Array<Array<unknown>> = []
+    const original = console.timeStamp
+    console.timeStamp = ((...args: Array<unknown>) => void calls.push(args)) as typeof console.timeStamp
+    try {
+      const store = make()
+      store.setState({ n: 1 }, false, 'bump')
+      expect(calls).toHaveLength(1)
+      expect(calls[0].slice(0, 1)).toEqual(['bump'])
+      expect(calls[0].slice(3, 5)).toEqual(['cost', 'Zustand'])
+      for (const r of getRecorders()) r.dispose({ silent: true })
+      const quiet = make(createMemoryTransport(), { performanceTrack: false })
+      quiet.setState({ n: 1 }, false, 'bump')
+      expect(calls).toHaveLength(1)
+    } finally {
+      console.timeStamp = original
+    }
+  })
+})
+
 describe('inspectStore (no middleware)', () => {
   it('records changes and can still time travel', () => {
     const transport = createMemoryTransport()

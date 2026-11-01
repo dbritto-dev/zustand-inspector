@@ -1,4 +1,5 @@
 import { createStore, type StoreApi } from 'zustand/vanilla'
+import type { Path } from './analysis'
 import type { ActionMeta, Command, InspectorEvents, SessionExport, StoreInfo } from './protocol'
 import { envelope, isOwnMessage } from './session'
 import { getDefaultTransport, type Transport } from './transport'
@@ -10,6 +11,9 @@ import { getDefaultTransport, type Transport } from './transport'
  */
 
 export type PanelTab = 'state' | 'diff' | 'action'
+
+/** Which actions the list shows, by cost. */
+export type CostFilter = 'all' | 'slow' | 'wasted'
 
 export interface PanelStoreData {
   storeId: string
@@ -34,6 +38,15 @@ export interface PanelState {
   showFunctions: boolean
   /** Serialized snapshots by `${storeId}\0${actionId}`. */
   snapshots: Record<string, unknown>
+  /** Path selected in the state tree: its history shows above the tree. */
+  selectedPath: Path | null
+  /** Pinned path: the action list, state and diff narrow to it. */
+  pinnedPath: Path | null
+  /** Range comparison: diff from this action to the selected one. */
+  compareFrom: number | null
+  costFilter: CostFilter
+  /** Search inside the state tree (keys and values). */
+  stateSearch: string
 }
 
 export interface PanelModel {
@@ -45,6 +58,13 @@ export interface PanelModel {
   setTab(tab: PanelTab): void
   setFilter(filter: string): void
   setShowFunctions(show: boolean): void
+  selectPath(path: Path | null): void
+  pinPath(path: Path | null): void
+  /** Select `id` and compare it with the action selected before (shift-click). */
+  selectRange(id: number): void
+  clearCompare(): void
+  setCostFilter(filter: CostFilter): void
+  setStateSearch(query: string): void
   /** Ask the page for a snapshot once; returns it when already known. */
   snapshot(storeId: string, id: number): unknown | undefined
   /** Called with each session export the page sends back. */
@@ -66,6 +86,11 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
     filter: '',
     showFunctions: false,
     snapshots: {},
+    selectedPath: null,
+    pinnedPath: null,
+    compareFrom: null,
+    costFilter: 'all',
+    stateSearch: '',
   }))
   const requested = new Set<string>()
   const exportListeners = new Set<(data: SessionExport) => void>()
@@ -119,6 +144,10 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
         order: isNew ? [...s.order, info.storeId] : s.order,
         selectedStore,
         selectedAction: keepAction ? s.selectedAction : null,
+        compareFrom:
+          selectedStore === info.storeId && s.compareFrom !== null && !info.actions.some((a) => a.id === s.compareFrom)
+            ? null
+            : s.compareFrom,
         snapshots,
       }
     })
@@ -141,6 +170,10 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
           !branch || s.selectedStore !== msg.storeId || s.selectedAction === null || s.selectedAction <= branch.fromId
         return {
           selectedAction: keepSelection ? s.selectedAction : null,
+          compareFrom:
+            branch && s.selectedStore === msg.storeId && s.compareFrom !== null && s.compareFrom > branch.fromId
+              ? null
+              : s.compareFrom,
           snapshots: { ...s.snapshots, [snapshotKey(msg.storeId, msg.currentId)]: msg.state },
         }
       })
@@ -183,18 +216,51 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
     command(command) {
       const { selectedStore } = store.getState()
       if (!selectedStore) return
-      if (command.type === 'reset' || command.type === 'commit') store.setState({ selectedAction: null })
+      if (command.type === 'reset' || command.type === 'commit') {
+        store.setState({ selectedAction: null, compareFrom: null })
+      }
       send(selectedStore, command)
     },
     selectStore(storeId) {
-      store.setState({ selectedStore: storeId, selectedAction: null })
+      // Paths and ranges belong to one store's shape and history.
+      store.setState({
+        selectedStore: storeId,
+        selectedAction: null,
+        selectedPath: null,
+        pinnedPath: null,
+        compareFrom: null,
+        stateSearch: '',
+      })
     },
     selectAction(id) {
       const s = store.getState()
       const data = s.selectedStore ? s.stores[s.selectedStore] : undefined
       // Selecting the latest action while it is current means "follow live".
       const follow = data && id === data.currentId && id === data.actions.at(-1)?.id
-      store.setState({ selectedAction: follow ? null : id })
+      store.setState({ selectedAction: follow ? null : id, compareFrom: null })
+    },
+    selectRange(id) {
+      const s = store.getState()
+      const data = s.selectedStore ? s.stores[s.selectedStore] : undefined
+      if (!data) return
+      const anchor = s.selectedAction ?? data.currentId
+      if (anchor === id) return
+      store.setState({ compareFrom: anchor, selectedAction: id, tab: 'diff' })
+    },
+    clearCompare() {
+      store.setState({ compareFrom: null })
+    },
+    selectPath(selectedPath) {
+      store.setState({ selectedPath })
+    },
+    pinPath(pinnedPath) {
+      store.setState({ pinnedPath, selectedPath: pinnedPath ?? store.getState().selectedPath })
+    },
+    setCostFilter(costFilter) {
+      store.setState({ costFilter })
+    },
+    setStateSearch(stateSearch) {
+      store.setState({ stateSearch })
     },
     setTab(tab) {
       store.setState({ tab })

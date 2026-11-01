@@ -1,5 +1,6 @@
 import { diff as computeDiff } from './diff'
 import type {
+  ActionCost,
   ActionMeta,
   ActionSource,
   Command,
@@ -23,6 +24,21 @@ export interface RecorderOptions extends SerializeOptions {
   sanitize?: (state: any) => unknown
   /** Defaults to the shared TanStack Devtools transport. */
   transport?: Transport
+  /**
+   * Add each timed action to a "Zustand" track in Chrome's Performance panel
+   * (via `console.timeStamp`). Other browsers ignore it. Default true.
+   */
+  performanceTrack?: boolean
+}
+
+/** Timing measured around `set()` by the middleware. */
+export interface ActionTiming {
+  /** `performance.now()` before `set()`. */
+  start: number
+  /** `performance.now()` after `set()` returned (listeners included). */
+  end: number
+  /** Listeners notified (0 when the state object did not change). */
+  listeners: number
 }
 
 /** The minimal store surface the recorder needs. `setState` must replace and must not be recorded. */
@@ -65,6 +81,8 @@ export class StoreRecorder<T> {
   #dirtyWhilePaused = false
   #silent = 0
   #initialState: T
+  /** The original state at `currentId`: the baseline for diffs and cost checks. */
+  #lastState: T | undefined
   #lastSerialized: unknown
   #disposers: Array<() => void> = []
   #disposed = false
@@ -123,7 +141,7 @@ export class StoreRecorder<T> {
   }
 
   /** Record the store's current state as a new action. */
-  record(name: string, payload?: unknown, source: ActionSource = 'app'): void {
+  record(name: string, payload?: unknown, source: ActionSource = 'app', timing?: ActionTiming): void {
     if (this.#disposed || this.isSilent) return
     if (this.#paused) {
       this.#dirtyWhilePaused = true
@@ -133,8 +151,9 @@ export class StoreRecorder<T> {
     // state being viewed never led here, so they are discarded (undo/redo
     // semantics) and the new action records where it branched from.
     const branch = this.#discardFuture()
-    const entry = this.#push(name, payload, source, this.#target.getState())
+    const entry = this.#push(name, payload, source, this.#target.getState(), timing)
     if (branch) entry.meta.branch = branch
+    if (timing) this.#trace(entry.meta, timing)
     this.#send('action', {
       ...envelope(),
       storeId: this.storeId,
@@ -191,6 +210,7 @@ export class StoreRecorder<T> {
     if (!entry) return
     this.#write(entry.state)
     this.#currentId = id
+    this.#lastState = entry.state
     this.#lastSerialized = this.#serialize(entry.state)
     this.#send('jumped', {
       ...envelope(),
@@ -284,15 +304,17 @@ export class StoreRecorder<T> {
     if (!silent) this.#send('removed', { ...envelope(), storeId: this.storeId })
   }
 
-  #push(name: string, payload: unknown, source: ActionSource, state: T): Entry<T> {
+  #push(name: string, payload: unknown, source: ActionSource, state: T, timing?: ActionTiming): Entry<T> {
     const serialized = this.#serialize(state)
     const meta: ActionMeta = { id: ++this.#seq, name, ts: Date.now(), source }
     if (payload !== undefined) meta.payload = this.#serializeValue(payload)
-    if (this.#options.diff !== false && this.#history.length > 0) {
+    const isFirst = this.#history.length === 0
+    if (this.#options.diff !== false && !isFirst) {
       const { changes, truncated } = computeDiff(this.#lastSerialized, serialized)
       meta.changes = changes
       if (truncated) meta.changesTruncated = true
     }
+    meta.cost = this.#cost(meta, state, serialized, isFirst, timing)
     const entry: Entry<T> = { meta, state }
     this.#history.push(entry)
     while (this.#history.length > this.maxHistory) {
@@ -300,8 +322,38 @@ export class StoreRecorder<T> {
       this.#dropped++
     }
     this.#currentId = meta.id
+    this.#lastState = state
     this.#lastSerialized = serialized
     return entry
+  }
+
+  #cost(meta: ActionMeta, state: T, serialized: unknown, isFirst: boolean, timing?: ActionTiming): ActionCost {
+    const cost: ActionCost = { stateSize: sizeOf(serialized) }
+    if (timing) {
+      cost.durationMs = Math.round((timing.end - timing.start) * 100) / 100
+      cost.listeners = timing.listeners
+    }
+    if (isFirst) return cost
+    const prev = this.#lastState
+    // Zustand notifies listeners whenever the state object changes; when no
+    // value changed, every listener ran for nothing.
+    if (prev !== undefined && prev !== state && meta.changes && meta.changes.length === 0 && !meta.changesTruncated) {
+      cost.noop = true
+    }
+    const keys = sameValueKeys(prev, state, this.#lastSerialized, serialized)
+    if (keys.length > 0) cost.sameValueKeys = keys
+    return cost
+  }
+
+  /** One entry on a "Zustand" track in Chrome's Performance panel. */
+  #trace(meta: ActionMeta, timing: ActionTiming): void {
+    if (this.#options.performanceTrack === false || typeof console === 'undefined') return
+    try {
+      const timeStamp = console.timeStamp as unknown as (...args: Array<unknown>) => void
+      timeStamp(meta.name, timing.start, timing.end, this.name, 'Zustand', meta.cost?.noop ? 'error' : 'primary')
+    } catch {
+      // Not supported here; nothing to do.
+    }
   }
 
   #write(state: T): void {
@@ -334,4 +386,42 @@ export class StoreRecorder<T> {
       if (typeof console !== 'undefined') console.warn('[zustand-inspector]', error)
     }
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+/** Approximate serialized size in characters; 0 when it cannot be measured. */
+function sizeOf(serialized: unknown): number {
+  try {
+    return JSON.stringify(serialized)?.length ?? 0
+  } catch {
+    return 0
+  }
+}
+
+const OPAQUE = /"\$t":"(redacted|truncated|more|ref)"/
+
+/**
+ * Top-level keys whose value got a new reference but serializes the same.
+ * Selectors that return those keys re-render for nothing. Keys whose
+ * serialized form hides data (redacted, truncated) are skipped, since an
+ * equal placeholder says nothing about the real value.
+ */
+function sameValueKeys(prev: unknown, next: unknown, prevSerialized: unknown, nextSerialized: unknown): Array<string> {
+  if (!isRecord(prev) || !isRecord(next) || !isRecord(prevSerialized) || !isRecord(nextSerialized)) return []
+  const keys: Array<string> = []
+  for (const key of Object.keys(next)) {
+    const before = prev[key]
+    const after = next[key]
+    if (!(key in prev) || before === after) continue
+    if (typeof after !== 'object' || after === null) continue
+    if (!(key in prevSerialized) || !(key in nextSerialized)) continue
+    const a = JSON.stringify(prevSerialized[key])
+    if (a === JSON.stringify(nextSerialized[key]) && !OPAQUE.test(a)) keys.push(key)
+  }
+  return keys
 }

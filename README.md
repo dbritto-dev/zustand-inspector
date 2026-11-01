@@ -73,6 +73,30 @@ Two build notes:
 - **CSS target.** Astryx colors rely on CSS `light-dark()`, so a bundler's `build.cssTarget` must be at least Chrome 123 / Safari 17.5 / Firefox 120. Older targets rewrite every theme color into a fallback that only works in dark mode.
 - **Root sync.** Astryx's `<Theme>` normally writes `data-theme` onto your `<html>`. The panel uses its own theme root, so your page is never touched.
 
+### Who changed this, and what did it cost?
+
+The Astryx panel answers the two questions a state log usually can't.
+
+- **Search inside state.** The State tab filters the tree by key or value and opens the matching branches.
+- **Path history.** Click any key in the tree to see:
+  - its value at the selected action
+  - the action that last changed it
+  - every recorded action that touched it, with before and after values
+- **Pin a path.** "Pin path" narrows the action list, the state tree and the diff to that path.
+- **Range diff.** Shift-click a second action to diff the two states, across every action in between.
+- **Cost per action.** The `inspector` middleware times each `set()` including the store's synchronous listeners, and counts the listeners it notified. The Action tab shows the time, listeners, state size and findings. The list flags:
+  - **slow:** longer than a frame (16 ms)
+  - **no-op:** a new state object with no changed value, so every listener ran for nothing
+  - **same value:** a key got a new reference with an equal value, so selectors reading it re-render
+
+  The Slow and Wasted filters show only those actions. The toolbar shows the current state size.
+- **Chrome Performance panel.** Timed actions also appear on a "Zustand" track, through `console.timeStamp`. Turn it off with `performanceTrack: false`.
+- **History branches.** Changing state while viewing the past discards the actions after that state, like undo/redo. The new action shows "from #N".
+
+Notes:
+- Path history comes from the per-action diffs, so it can miss changes in an action that changed more than 200 values (the panel says so).
+- `inspectStore()` stores record states but can't be timed, because their actions call `set` directly.
+
 For a store you can't wrap (for example a third-party one), use `inspectStore`. It records every change as `setState` and still supports time travel:
 
 ```ts
@@ -96,6 +120,7 @@ To host the panel outside TanStack (a plain `<div>`, an extension page, a Vite D
 | `inferActionName` | `true` | Infer the action name from the calling function's name. |
 | `anonymousActionType` | `'anonymous'` | Name used when nothing else is known. |
 | `transport` | TanStack bus | Any object implementing `Transport`. |
+| `performanceTrack` | `true` | Add timed actions to a "Zustand" track in Chrome's Performance panel. |
 
 ## How it works
 
@@ -129,6 +154,7 @@ Ideas borrowed (see the research report):
 
 - No skip or reorder of actions. These need recomputation from reducers, which a `set()`-based store doesn't have.
 - Async actions show as separate rows. Next step: Pinia-style `groupId`s so `load:pending → load:fulfilled` collapse into one row.
+- Not yet: editing state from the panel, a subscriber/selector view, go-to-source, agent (MCP) tools.
 - State editing from the panel, a "why did this subscriber run" view, and go-to-source for actions (from the stack trace) aren't built yet.
 - Other hosts: a Redux DevTools adapter (so existing users keep their workflow), a WXT browser extension, Rozenite (React Native), and command endpoints that MCP-based coding agents can call.
 

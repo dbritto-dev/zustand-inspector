@@ -1,6 +1,7 @@
 import { HStack } from '@astryxdesign/core/HStack'
 import { StackItem } from '@astryxdesign/core/Stack'
 import { Text } from '@astryxdesign/core/Text'
+import { mapKeySegment } from '../analysis'
 import { isTagged } from '../serialize'
 
 /**
@@ -61,7 +62,7 @@ export function childrenOf(value: unknown, showFunctions: boolean): Array<ValueC
     case 'map':
       return ((value as { v: Array<[unknown, unknown]> }).v ?? [])
         .filter(([, v]) => keep(v))
-        .map(([k, v], i) => ({ segment: `entry-${i}`, key: { ...describe(k, 40), text: `${describe(k, 40).text} →` }, value: v }))
+        .map(([k, v]) => ({ segment: mapKeySegment(k), key: { ...describe(k, 40), text: `${describe(k, 40).text} →` }, value: v }))
     case 'object':
     case 'instance': {
       const body = (isTagged(value) ? value.v : value) as Record<string, unknown>

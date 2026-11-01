@@ -25,12 +25,29 @@ import { VStack } from '@astryxdesign/core/VStack'
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { FileInput } from '@astryxdesign/core/FileInput'
 import { Tooltip } from '@astryxdesign/core/Tooltip'
-import { Database, GitBranch, Pause, Play, SkipForward, Undo2 } from 'lucide-react'
+import { Section } from '@astryxdesign/core/Section'
+import { ToggleButton, ToggleButtonGroup } from '@astryxdesign/core/ToggleButton'
+import { Database, GitBranch, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import { formatPath } from '../diff'
 import { downloadJson, stateFromImport } from '../files'
-import { snapshotKey, type PanelModel, type PanelStoreData, type PanelTab } from '../model'
+import {
+  actionsTouching,
+  changesAt,
+  flagsFor,
+  formatMs,
+  formatSize,
+  historyMayBeIncomplete,
+  lastChangeOf,
+  rangeDiff,
+  samePath,
+  valueAt,
+  type CostFlag,
+  type FlagKind,
+  type Path,
+} from '../analysis'
+import { snapshotKey, type CostFilter, type PanelModel, type PanelStoreData, type PanelTab } from '../model'
 import { formatDelta, formatTime } from '../panel/format'
 import type { ActionMeta, Change } from '../protocol'
 import { childrenOf, describe, KeyValue, kindOf, summarize, ValueText } from './Value'
@@ -80,8 +97,9 @@ export function InspectorPanel({ model, width }: { model: PanelModel; width: num
     )
   }
 
-  const onSelect = (id: number) => {
-    model.selectAction(id)
+  const onSelect = (id: number, range: boolean) => {
+    if (range) model.selectRange(id)
+    else model.selectAction(id)
     if (!twoRegions) setDrawerOpen(true)
   }
   const timeline = <Timeline model={model} data={data} onSelect={onSelect} />
@@ -140,6 +158,7 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
   const showFunctions = useStore(model.store, (s) => s.showFunctions)
   const [importOpen, setImportOpen] = useState(false)
   const status = statusOf(data)
+  const currentSize = data.actions.find((a) => a.id === data.currentId)?.cost?.stateSize
 
   const filterInput = (
     <TextInput
@@ -185,6 +204,13 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
               tooltip={data.paused ? 'Resume recording' : 'Pause recording'}
               onClick={() => model.command({ type: data.paused ? 'resume' : 'pause' })}
             />
+            {currentSize !== undefined && !compact ? (
+              <Tooltip content="Size of the current state, serialized">
+                <Text type="supporting" hasTabularNumbers>
+                  {formatSize(currentSize)}
+                </Text>
+              </Tooltip>
+            ) : null}
           </>
         }
         endContent={
@@ -378,6 +404,38 @@ function Scrubber({ model, data }: { model: PanelModel; data: PanelStoreData }) 
   )
 }
 
+function costCounts(actions: ReadonlyArray<ActionMeta>) {
+  let slow = 0
+  let wasted = 0
+  for (const action of actions) {
+    const kinds = flagsFor(action).map((f) => f.kind)
+    if (kinds.includes('slow')) slow++
+    if (kinds.includes('noop') || kinds.includes('sameValue')) wasted++
+  }
+  return { slow, wasted }
+}
+
+function matchesCost(action: ActionMeta, filter: CostFilter): boolean {
+  if (filter === 'all') return true
+  const kinds = flagsFor(action).map((f) => f.kind)
+  return filter === 'slow' ? kinds.includes('slow') : kinds.includes('noop') || kinds.includes('sameValue')
+}
+
+const FLAG_COLOR: Record<FlagKind, 'red' | 'yellow' | 'gray'> = {
+  slow: 'red',
+  noop: 'yellow',
+  sameValue: 'yellow',
+  large: 'gray',
+}
+
+function FlagToken({ flag }: { flag: CostFlag }) {
+  return (
+    <Tooltip content={flag.detail}>
+      <Token label={flag.label} size="sm" color={FLAG_COLOR[flag.kind]} description={flag.detail} />
+    </Tooltip>
+  )
+}
+
 function Timeline({
   model,
   data,
@@ -385,16 +443,29 @@ function Timeline({
 }: {
   model: PanelModel
   data: PanelStoreData
-  onSelect: (id: number) => void
+  onSelect: (id: number, range: boolean) => void
 }) {
   const filter = useStore(model.store, (s) => s.filter.trim().toLowerCase())
   const selectedAction = useStore(model.store, (s) => s.selectedAction)
+  const compareFrom = useStore(model.store, (s) => s.compareFrom)
+  const costFilter = useStore(model.store, (s) => s.costFilter)
+  const pinnedPath = useStore(model.store, (s) => s.pinnedPath)
   const followRef = useRef<HTMLLIElement>(null)
   const selected = selectedAction ?? data.currentId
   const currentIndex = data.actions.findIndex((a) => a.id === data.currentId)
   const futureFrom = data.actions[currentIndex + 1]?.id ?? Infinity
   const first = data.actions[0]?.ts ?? 0
-  const visible = filter ? data.actions.filter((a) => a.name.toLowerCase().includes(filter)) : data.actions
+  const counts = useMemo(() => costCounts(data.actions), [data.actions])
+  const touching = useMemo(
+    () => (pinnedPath ? new Set(actionsTouching(data.actions, pinnedPath).map((a) => a.id)) : null),
+    [data.actions, pinnedPath],
+  )
+  const visible = data.actions.filter(
+    (a) =>
+      (!filter || a.name.toLowerCase().includes(filter)) &&
+      matchesCost(a, costFilter) &&
+      (!touching || touching.has(a.id) || a.source === 'init'),
+  )
 
   // Keep the selected row (the live one while following) in view.
   useEffect(() => {
@@ -403,6 +474,37 @@ function Timeline({
 
   return (
     <VStack gap={0}>
+      <HStack gap={2} paddingInline={3} paddingBlock={1.5} vAlign="center" wrap="wrap">
+        <ToggleButtonGroup
+          label="Show actions"
+          size="sm"
+          type="single"
+          value={costFilter}
+          onChange={(value) => model.setCostFilter((typeof value === 'string' ? value : 'all') as CostFilter)}
+        >
+          <ToggleButton value="all" label={`All ${data.actions.length}`} />
+          <ToggleButton
+            value="slow"
+            label={`Slow ${counts.slow}`}
+            tooltip="set() took longer than a frame, listeners included"
+          />
+          <ToggleButton
+            value="wasted"
+            label={`Wasted ${counts.wasted}`}
+            tooltip="No value changed, or a new reference held an equal value"
+          />
+        </ToggleButtonGroup>
+        {pinnedPath ? (
+          <Token
+            label={`Pinned ${formatPath(pinnedPath)}`}
+            size="sm"
+            color="blue"
+            icon={<Icon icon={Pin} size="xsm" />}
+            description={`Showing the ${touching?.size ?? 0} actions that changed ${formatPath(pinnedPath)}`}
+            onRemove={() => model.pinPath(null)}
+          />
+        ) : null}
+      </HStack>
       {data.dropped > 0 ? (
         <HStack paddingInline={3} paddingBlock={1.5}>
           <Text type="supporting">
@@ -413,12 +515,14 @@ function Timeline({
       <List density="compact" hasDividers>
         {visible.map((action) => {
           const isFuture = action.id >= futureFrom
+          const flags = flagsFor(action)
+          const inRange = compareFrom !== null && action.id === compareFrom
           return (
             <ListItem
               key={action.id}
               ref={action.id === selected ? followRef : undefined}
-              isSelected={action.id === selected}
-              onClick={() => onSelect(action.id)}
+              isSelected={action.id === selected || inRange}
+              onClick={(e) => onSelect(action.id, e.shiftKey)}
               startContent={
                 <Text type="supporting" hasTabularNumbers>
                   #{action.id}
@@ -443,6 +547,7 @@ function Timeline({
                       />
                     </Tooltip>
                   ) : null}
+                  {flags[0] ? <FlagToken flag={flags[0]} /> : null}
                 </HStack>
               }
               endContent={
@@ -473,20 +578,42 @@ function Timeline({
       </List>
       {visible.length === 0 ? (
         <HStack paddingInline={3} paddingBlock={3}>
-          <Text type="supporting">No actions match "{filter}".</Text>
+          <Text type="supporting">{emptyTimelineText(filter, costFilter, pinnedPath)}</Text>
         </HStack>
       ) : null}
+      <HStack paddingInline={3} paddingBlock={2}>
+        <Text type="supporting">Shift-click a second action to compare the two states.</Text>
+      </HStack>
     </VStack>
   )
 }
 
+function emptyTimelineText(filter: string, costFilter: CostFilter, pinnedPath: Path | null): string {
+  if (filter) return `No actions match "${filter}".`
+  if (costFilter === 'slow') return 'No slow actions. Every set() finished within a frame.'
+  if (costFilter === 'wasted') return 'No wasted updates recorded.'
+  if (pinnedPath) return `No recorded action changed ${formatPath(pinnedPath)}.`
+  return 'No actions yet.'
+}
+
+/** The two ends of a range, in timeline order. */
+function rangeEnds(data: PanelStoreData, a: number, b: number): [ActionMeta, ActionMeta] | null {
+  const ia = data.actions.findIndex((x) => x.id === a)
+  const ib = data.actions.findIndex((x) => x.id === b)
+  if (ia === -1 || ib === -1) return null
+  return ia < ib ? [data.actions[ia], data.actions[ib]] : [data.actions[ib], data.actions[ia]]
+}
+
 function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreData; onClose?: () => void }) {
   const selectedAction = useStore(model.store, (s) => s.selectedAction)
+  const compareFrom = useStore(model.store, (s) => s.compareFrom)
   const tab = useStore(model.store, (s) => s.tab)
   const id = selectedAction ?? data.currentId
   const action = data.actions.find((a) => a.id === id)
   const inDrawer = onClose !== undefined
   const panelId = `zi-detail-${inDrawer ? 'drawer' : 'pane'}`
+  const range = compareFrom !== null ? rangeEnds(data, compareFrom, id) : null
+  const rangeChanges = useRangeDiff(model, data, range)
 
   if (!action) {
     return (
@@ -496,28 +623,41 @@ function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreD
     )
   }
   const isCurrent = action.id === data.currentId
-  const changeCount = action.changes?.length ?? 0
+  const changeCount = range ? (rangeChanges?.changes.length ?? 0) : (action.changes?.length ?? 0)
 
-  const title = (
+  const title = range ? (
+    <Text type="code" weight="semibold" maxLines={1}>
+      #{range[0].id} → #{range[1].id}
+    </Text>
+  ) : (
     <Text type="code" weight="semibold" maxLines={1}>
       #{action.id} {action.name}
     </Text>
   )
-  const time = (
+  const subtitle = range ? (
+    <Token
+      label="Comparing a range"
+      size="sm"
+      color="blue"
+      description="Diff between the two selected states"
+      onRemove={() => model.clearCompare()}
+    />
+  ) : (
     <Text type="supporting" hasTabularNumbers>
       {formatTime(action.ts)}
     </Text>
   )
-  const current = isCurrent ? <StatusDot variant="success" label="Current state" tooltip="Current state" /> : null
-  const jump = !isCurrent ? (
-    <Button
-      label="Jump here"
-      variant="primary"
-      size="sm"
-      icon={<Icon icon={Undo2} />}
-      onClick={() => model.command({ type: 'jump', toId: action.id })}
-    />
-  ) : null
+  const current = isCurrent && !range ? <StatusDot variant="success" label="Current state" tooltip="Current state" /> : null
+  const jump =
+    !isCurrent && !range ? (
+      <Button
+        label="Jump here"
+        variant="primary"
+        size="sm"
+        icon={<Icon icon={Undo2} />}
+        onClick={() => model.command({ type: 'jump', toId: action.id })}
+      />
+    ) : null
   const tabs = (
     <TabList value={tab} onChange={(value) => model.setTab(value as PanelTab)} role="tablist" size="sm">
       <Tab value="state" label="State" panelId={panelId} />
@@ -537,7 +677,7 @@ function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreD
     <VStack gap={0}>
       <DrawerHeader
         title={title}
-        subtitle={time}
+        subtitle={subtitle}
         endContent={current}
         onOpenChange={(open) => {
           if (!open) onClose()
@@ -547,14 +687,14 @@ function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreD
     </VStack>
   ) : (
     <Toolbar
-      label={`Action #${action.id}`}
+      label={range ? 'Range comparison' : `Action #${action.id}`}
       size="sm"
       gap={2}
       dividers={['bottom']}
       startContent={
         <>
           {title}
-          {time}
+          {subtitle}
           {current}
         </>
       }
@@ -575,7 +715,7 @@ function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreD
           {tab === 'state' ? (
             <StateView model={model} data={data} action={action} />
           ) : tab === 'diff' ? (
-            <DiffView model={model} action={action} />
+            <DiffView model={model} action={action} range={range} rangeChanges={rangeChanges} />
           ) : (
             <ActionView action={action} />
           )}
@@ -585,10 +725,30 @@ function Detail({ model, data, onClose }: { model: PanelModel; data: PanelStoreD
   )
 }
 
+/** Snapshots of both ends of a range, diffed once both have arrived from the page. */
+function useRangeDiff(model: PanelModel, data: PanelStoreData, range: [ActionMeta, ActionMeta] | null) {
+  const fromKey = range ? snapshotKey(data.storeId, range[0].id) : ''
+  const toKey = range ? snapshotKey(data.storeId, range[1].id) : ''
+  const from = useStore(model.store, (s) => (range ? s.snapshots[fromKey] : undefined))
+  const to = useStore(model.store, (s) => (range ? s.snapshots[toKey] : undefined))
+  useEffect(() => {
+    if (!range) return
+    model.snapshot(data.storeId, range[0].id)
+    model.snapshot(data.storeId, range[1].id)
+  }, [model, data.storeId, range?.[0].id, range?.[1].id])
+  return useMemo(
+    () => (range && from !== undefined && to !== undefined ? rangeDiff(from, to) : null),
+    [range?.[0].id, range?.[1].id, from, to],
+  )
+}
+
 function StateView({ model, data, action }: { model: PanelModel; data: PanelStoreData; action: ActionMeta }) {
   const isCurrent = action.id === data.currentId
   const snapshot = useStore(model.store, (s) => s.snapshots[snapshotKey(data.storeId, action.id)])
   const showFunctions = useStore(model.store, (s) => s.showFunctions)
+  const search = useStore(model.store, (s) => s.stateSearch)
+  const selectedPath = useStore(model.store, (s) => s.selectedPath)
+  const pinnedPath = useStore(model.store, (s) => s.pinnedPath)
   const known = isCurrent || snapshot !== undefined
   const value = isCurrent ? data.state : snapshot
 
@@ -596,54 +756,253 @@ function StateView({ model, data, action }: { model: PanelModel; data: PanelStor
     if (!known) model.snapshot(data.storeId, action.id)
   }, [known, model, data.storeId, action.id])
 
+  const root = pinnedPath && known ? valueAt(value, pinnedPath) : { found: true, value }
+  const query = search.trim().toLowerCase()
   const items = useMemo(
-    () => (known ? toTreeItems(value, data.storeId, showFunctions, 0) : []),
-    [known, value, data.storeId, showFunctions],
+    () =>
+      known && root.found
+        ? toTreeItems(root.value, pinnedPath ?? [], showFunctions, 0, {
+            query,
+            selectedPath,
+            onSelect: (path) => model.selectPath(samePath(path, selectedPath) ? null : path),
+          })
+        : [],
+    [known, root.found, root.value, pinnedPath, showFunctions, query, selectedPath, model],
   )
 
-  if (!known) return <Text color="secondary">Loading snapshot…</Text>
-  if (kindOf(value) === 'leaf') return <ValueText value={value} />
-  if (items.length === 0) return <ValueText described={summarize(value, showFunctions)} />
-  // Keyed by store so expansion state does not carry over between stores.
-  return <TreeList key={data.storeId} density="compact" items={items} />
-}
-
-function toTreeItems(value: unknown, path: string, showFunctions: boolean, depth: number): Array<TreeListItemData> {
-  return childrenOf(value, showFunctions).map((child) => {
-    const id = `${path}/${child.segment}`
-    const children = kindOf(child.value) === 'leaf' ? [] : toTreeItems(child.value, id, showFunctions, depth + 1)
-    const shown = children.length > 0 ? summarize(child.value, showFunctions) : describe(child.value)
-    const label = <KeyValue name={child.key} value={shown} />
-    return children.length > 0 ? { id, label, children, isExpanded: depth === 0 } : { id, label }
-  })
-}
-
-function DiffView({ model, action }: { model: PanelModel; action: ActionMeta }) {
-  const showFunctions = useStore(model.store, (s) => s.showFunctions)
-  if (action.source === 'init') return <Text color="secondary">Initial state. Nothing to compare with.</Text>
-  if (!action.changes) return <Text color="secondary">Diffs are turned off for this store.</Text>
-  const changes = action.changes.filter((c) => showFunctions || !isFunctionChange(c))
-  if (changes.length === 0) {
-    return <Text color="secondary">No changes. This action set the values it already had.</Text>
-  }
   return (
-    <VStack gap={2}>
-      <List density="compact" hasDividers edge="flush">
-        {changes.map((change, i) => (
-          <ListItem
-            key={`${formatPath(change.path)}-${i}`}
-            align="first-line"
-            startContent={<Badge variant={badgeFor(change.kind)} label={change.kind} />}
-            label={
-              <Text type="code" weight="semibold" maxLines={1}>
-                {formatPath(change.path)}
+    <VStack gap={3}>
+      <TextInput
+        label="Search state"
+        isLabelHidden
+        size="sm"
+        startIcon="search"
+        placeholder="Search keys and values"
+        hasClear
+        value={search}
+        onChange={(next) => model.setStateSearch(next)}
+      />
+      {selectedPath ? <PathHistory model={model} data={data} action={action} path={selectedPath} value={value} /> : null}
+      {!known ? (
+        <Text color="secondary">Loading snapshot…</Text>
+      ) : !root.found ? (
+        <Text color="secondary">{formatPath(pinnedPath ?? [])} does not exist in this state.</Text>
+      ) : kindOf(root.value) === 'leaf' ? (
+        <ValueText value={root.value} />
+      ) : items.length === 0 ? (
+        query ? (
+          <Text color="secondary">Nothing in this state matches "{search.trim()}".</Text>
+        ) : (
+          <ValueText described={summarize(root.value, showFunctions)} />
+        )
+      ) : (
+        // Re-keyed when the search, pin or store changes, so matches open fresh.
+        <TreeList key={`${data.storeId}|${query}|${formatPath(pinnedPath ?? [])}`} density="compact" items={items} />
+      )}
+    </VStack>
+  )
+}
+
+interface TreeOptions {
+  query: string
+  selectedPath: Path | null
+  onSelect: (path: Path) => void
+}
+
+function toTreeItems(
+  value: unknown,
+  path: Path,
+  showFunctions: boolean,
+  depth: number,
+  options?: TreeOptions,
+): Array<TreeListItemData> {
+  const items: Array<TreeListItemData> = []
+  for (const child of childrenOf(value, showFunctions)) {
+    const childPath = [...path, child.segment]
+    const id = formatPath(childPath) || child.segment
+    const isContainer = kindOf(child.value) !== 'leaf'
+    const children = isContainer ? toTreeItems(child.value, childPath, showFunctions, depth + 1, options) : []
+    const shown = children.length > 0 ? summarize(child.value, showFunctions) : describe(child.value)
+    const query = options?.query ?? ''
+    const selfMatches =
+      !query || child.key.text.toLowerCase().includes(query) || (!isContainer && shown.text.toLowerCase().includes(query))
+    // While searching, keep matches and the branches that lead to them.
+    if (query && !selfMatches && children.length === 0) continue
+    const item: TreeListItemData = {
+      id,
+      label: <KeyValue name={child.key} value={shown} />,
+    }
+    if (options) {
+      item.onClick = () => options.onSelect(childPath)
+      item.isSelected = samePath(childPath, options.selectedPath)
+    }
+    if (children.length > 0) {
+      item.children = children
+      item.isExpanded = query ? true : depth === 0
+    }
+    items.push(item)
+  }
+  return items
+}
+
+function PathHistory({
+  model,
+  data,
+  action,
+  path,
+  value,
+}: {
+  model: PanelModel
+  data: PanelStoreData
+  action: ActionMeta
+  path: Path
+  value: unknown
+}) {
+  const pinnedPath = useStore(model.store, (s) => s.pinnedPath)
+  const isPinned = samePath(path, pinnedPath)
+  const history = useMemo(() => actionsTouching(data.actions, path), [data.actions, path])
+  const last = lastChangeOf(data.actions, path, action.id)
+  const current = valueAt(value, path)
+
+  return (
+    <Section variant="muted" padding={3}>
+      <VStack gap={2}>
+        <HStack gap={2} vAlign="center" wrap="wrap">
+          <StackItem size="fill">
+            <Text type="code" weight="semibold" maxLines={1}>
+              {formatPath(path)}
+            </Text>
+          </StackItem>
+          <Button
+            label={isPinned ? 'Unpin' : 'Pin path'}
+            size="sm"
+            variant="secondary"
+            icon={<Icon icon={isPinned ? PinOff : Pin} />}
+            tooltip={isPinned ? 'Show every action again' : 'Only show actions and changes for this path'}
+            onClick={() => model.pinPath(isPinned ? null : path)}
+          />
+          <IconButton label="Close path history" size="sm" variant="ghost" icon={<Icon icon="close" />} onClick={() => model.selectPath(null)} />
+        </HStack>
+        <MetadataList label={{ width: 120 }}>
+          <MetadataListItem label="Value here">
+            {current.found ? <ValueText value={current.value} /> : <Text color="secondary">Not present</Text>}
+          </MetadataListItem>
+          <MetadataListItem label="Last changed by">
+            {last ? (
+              <Button
+                label={`#${last.action.id} ${last.action.name}`}
+                size="sm"
+                variant="ghost"
+                tooltip="Select this action"
+                onClick={() => model.selectAction(last.action.id)}
+              />
+            ) : (
+              <Text color="secondary">No recorded action changed it up to here.</Text>
+            )}
+          </MetadataListItem>
+        </MetadataList>
+        {history.length > 0 ? (
+          <List
+            density="compact"
+            hasDividers
+            header={
+              <Text type="supporting">
+                Changed by {history.length} recorded action{history.length === 1 ? '' : 's'}
               </Text>
             }
-            description={<ChangeValues change={change} />}
-          />
-        ))}
-      </List>
-      {action.changesTruncated ? <Text type="supporting">Showing the first 200 changes.</Text> : null}
+          >
+            {history.map((h) => {
+              const change = changesAt(h.changes, path)[0]
+              return (
+                <ListItem
+                  key={h.id}
+                  isSelected={h.id === action.id}
+                  onClick={() => model.selectAction(h.id)}
+                  startContent={
+                    <Text type="supporting" hasTabularNumbers>
+                      #{h.id}
+                    </Text>
+                  }
+                  label={
+                    <Text type="code" maxLines={1}>
+                      {h.name}
+                    </Text>
+                  }
+                  description={change && samePath(change.path, path) ? <ChangeValues change={change} /> : undefined}
+                />
+              )
+            })}
+          </List>
+        ) : null}
+        {historyMayBeIncomplete(data.actions) ? (
+          <Text type="supporting">Some actions changed more than 200 values, so this history may be incomplete.</Text>
+        ) : null}
+      </VStack>
+    </Section>
+  )
+}
+
+function DiffView({
+  model,
+  action,
+  range,
+  rangeChanges,
+}: {
+  model: PanelModel
+  action: ActionMeta
+  range: [ActionMeta, ActionMeta] | null
+  rangeChanges: { changes: Array<Change>; truncated: boolean } | null
+}) {
+  const showFunctions = useStore(model.store, (s) => s.showFunctions)
+  const pinnedPath = useStore(model.store, (s) => s.pinnedPath)
+
+  let all: Array<Change>
+  let truncated = false
+  if (range) {
+    if (!rangeChanges) return <Text color="secondary">Loading both states…</Text>
+    all = rangeChanges.changes
+    truncated = rangeChanges.truncated
+  } else {
+    if (action.source === 'init') return <Text color="secondary">Initial state. Nothing to compare with.</Text>
+    if (!action.changes) return <Text color="secondary">Diffs are turned off for this store.</Text>
+    all = action.changes
+    truncated = !!action.changesTruncated
+  }
+  const scoped = pinnedPath ? changesAt(all, pinnedPath) : all
+  const changes = scoped.filter((c) => showFunctions || !isFunctionChange(c))
+
+  return (
+    <VStack gap={2}>
+      {range ? (
+        <Text type="supporting">
+          {changes.length} change{changes.length === 1 ? '' : 's'} from #{range[0].id} {range[0].name} to #{range[1].id}{' '}
+          {range[1].name}.
+        </Text>
+      ) : null}
+      {pinnedPath ? <Text type="supporting">Only changes under {formatPath(pinnedPath)}.</Text> : null}
+      {changes.length === 0 ? (
+        <Text color="secondary">
+          {pinnedPath ? `Nothing under ${formatPath(pinnedPath)} changed.` : 'No changes. The values stayed the same.'}
+        </Text>
+      ) : (
+        <List density="compact" hasDividers edge="flush">
+          {changes.map((change, i) => (
+            <ListItem
+              key={`${formatPath(change.path)}-${i}`}
+              align="first-line"
+              onClick={() => model.selectPath(change.path)}
+              startContent={<Badge variant={badgeFor(change.kind)} label={change.kind} />}
+              label={
+                <Text type="code" weight="semibold" maxLines={1}>
+                  {formatPath(change.path)}
+                </Text>
+              }
+              description={<ChangeValues change={change} />}
+            />
+          ))}
+        </List>
+      )}
+      {truncated ? <Text type="supporting">Showing the first {range ? 500 : 200} changes.</Text> : null}
     </VStack>
   )
 }
@@ -677,41 +1036,82 @@ function isFunctionChange(change: Change): boolean {
 
 function ActionView({ action }: { action: ActionMeta }) {
   const source = { app: 'App', init: 'Initial state', devtools: 'Devtools' }[action.source]
+  const cost = action.cost
+  const flags = flagsFor(action)
   return (
-    <MetadataList label={{ width: 96 }}>
-      <MetadataListItem label="Name">
-        <Text type="code">{action.name}</Text>
-      </MetadataListItem>
-      <MetadataListItem label="Id">
-        <Text type="code" hasTabularNumbers>
-          #{action.id}
-        </Text>
-      </MetadataListItem>
-      <MetadataListItem label="Source">
-        <Token label={source} size="sm" color={action.source === 'app' ? 'default' : 'gray'} />
-      </MetadataListItem>
-      <MetadataListItem label="Time">
-        <Text type="code" hasTabularNumbers>
-          {new Date(action.ts).toISOString()}
-        </Text>
-      </MetadataListItem>
-      {action.branch ? (
-        <MetadataListItem label="Branch">
-          <Text>{branchText(action.branch)}</Text>
+    <VStack gap={4}>
+      <MetadataList label={{ width: 120 }}>
+        <MetadataListItem label="Name">
+          <Text type="code">{action.name}</Text>
         </MetadataListItem>
-      ) : null}
-      <MetadataListItem label="Changes">
-        <Text hasTabularNumbers>{action.changes ? String(action.changes.length) : 'Not recorded'}</Text>
-      </MetadataListItem>
-      {action.payload !== undefined ? (
-        <MetadataListItem label="Payload">
-          {kindOf(action.payload) === 'leaf' ? (
-            <ValueText value={action.payload} />
-          ) : (
-            <TreeList density="compact" items={toTreeItems(action.payload, `payload-${action.id}`, true, 0)} />
-          )}
+        <MetadataListItem label="Id">
+          <Text type="code" hasTabularNumbers>
+            #{action.id}
+          </Text>
         </MetadataListItem>
+        <MetadataListItem label="Source">
+          <Token label={source} size="sm" color={action.source === 'app' ? 'default' : 'gray'} />
+        </MetadataListItem>
+        <MetadataListItem label="Time">
+          <Text type="code" hasTabularNumbers>
+            {new Date(action.ts).toISOString()}
+          </Text>
+        </MetadataListItem>
+        {action.branch ? (
+          <MetadataListItem label="Branch">
+            <Text>{branchText(action.branch)}</Text>
+          </MetadataListItem>
+        ) : null}
+        <MetadataListItem label="Changes">
+          <Text hasTabularNumbers>{action.changes ? String(action.changes.length) : 'Not recorded'}</Text>
+        </MetadataListItem>
+        {action.payload !== undefined ? (
+          <MetadataListItem label="Payload">
+            {kindOf(action.payload) === 'leaf' ? (
+              <ValueText value={action.payload} />
+            ) : (
+              <TreeList density="compact" items={toTreeItems(action.payload, [], true, 0)} />
+            )}
+          </MetadataListItem>
+        ) : null}
+      </MetadataList>
+      {cost ? (
+        <MetadataList label={{ width: 120 }} title={<Text weight="semibold">Cost</Text>}>
+          <MetadataListItem label="Time in set()">
+            {cost.durationMs !== undefined ? (
+              <Text hasTabularNumbers>{formatMs(cost.durationMs)}, listeners included</Text>
+            ) : (
+              <Text color="secondary">Not measured (needs the inspector middleware)</Text>
+            )}
+          </MetadataListItem>
+          <MetadataListItem label="Listeners">
+            {cost.listeners !== undefined ? (
+              <Text hasTabularNumbers>{cost.listeners} notified</Text>
+            ) : (
+              <Text color="secondary">Not measured</Text>
+            )}
+          </MetadataListItem>
+          <MetadataListItem label="State size">
+            <Text hasTabularNumbers>{formatSize(cost.stateSize)}</Text>
+          </MetadataListItem>
+          <MetadataListItem label="Findings">
+            {flags.length > 0 ? (
+              <VStack gap={1.5}>
+                {flags.map((flag) => (
+                  <HStack key={flag.kind} gap={2} vAlign="start">
+                    <FlagToken flag={flag} />
+                    <StackItem size="fill">
+                      <Text>{flag.detail}</Text>
+                    </StackItem>
+                  </HStack>
+                ))}
+              </VStack>
+            ) : (
+              <Text color="secondary">Nothing to flag.</Text>
+            )}
+          </MetadataListItem>
+        </MetadataList>
       ) : null}
-    </MetadataList>
+    </VStack>
   )
 }

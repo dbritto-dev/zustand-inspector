@@ -71,6 +71,10 @@ type Inspector = <
  * literally (same signal TanStack's EventClient uses), while `import.meta.env`
  * would be frozen into this package's own build output.
  */
+function now(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
 export function isProduction(): boolean {
   try {
     return process.env.NODE_ENV === 'production'
@@ -132,13 +136,34 @@ const inspectorImpl =
     let recorder: StoreRecorder<any> | undefined
 
     // Named so `inferCallerName` can find the frame right above it.
+    // Count listeners so each action can report how many it notified.
+    let listenerCount = 0
+    const subscribe = api.subscribe
+    api.subscribe = (listener) => {
+      listenerCount++
+      const unsubscribe = subscribe(listener)
+      let active = true
+      return () => {
+        if (active) {
+          active = false
+          listenerCount--
+        }
+        unsubscribe()
+      }
+    }
+
     function namedSet(partial: any, replace?: any, action?: Action) {
       const stack =
         action === undefined && options.inferActionName !== false ? new Error().stack : undefined
+      const before = get()
+      const start = now()
+      // Zustand runs its listeners synchronously inside set(), so this times them too.
       const result = (set as any)(partial, replace)
+      const end = now()
       if (recorder && !recorder.isSilent) {
         const { name, payload } = resolveAction(action, options, stack)
-        recorder.record(name, payload)
+        const listeners = Object.is(before, get()) ? 0 : listenerCount
+        recorder.record(name, payload, 'app', { start, end, listeners })
       }
       return result
     }

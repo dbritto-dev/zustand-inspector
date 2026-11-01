@@ -11,9 +11,10 @@ app.innerHTML = /* html */ `
       <button data-action="dec" aria-label="Decrement">−</button>
       <output id="count"></output>
       <button data-action="inc" aria-label="Increment">+</button>
+      <button data-action="slow" title="Wakes a listener that takes about 25 ms">Slow +1</button>
       <label class="row">step <input id="step" type="number" min="1" value="1" /></label>
     </div>
-    <p class="note">"increment" is named from the calling function; "decrement" and "setStep" pass names to set().</p>
+    <p class="note">"increment" is named from the calling function. "Slow +1" wakes a 25 ms listener.</p>
   </section>
   <section class="card">
     <h2>Todos <small id="status"></small></h2>
@@ -21,10 +22,11 @@ app.innerHTML = /* html */ `
     <div class="row">
       <button data-action="load">Load async</button>
       <button data-action="tag">Add tag</button>
+      <button data-action="refresh" title="Copies the todos Map without changing anything">Refresh</button>
       <span class="tags" id="tags"></span>
     </div>
     <ul class="todos" id="todos"></ul>
-    <p class="note">Map, Set and Date state; session.accessToken is redacted before it reaches the panel.</p>
+    <p class="note">Map, Set and Date state; session.accessToken is redacted. "Refresh" copies the Map without changing it.</p>
   </section>
   <section class="card" id="theme-card">
     <h2>Theme <small>inspectStore()</small></h2>
@@ -64,6 +66,14 @@ function renderTheme() {
 }
 
 counterStore.subscribe(renderCounter)
+// An expensive listener, so "Slow +1" shows up as a slow action.
+counterStore.subscribe((state) => {
+  if (!state.heavy) return
+  const until = performance.now() + 25
+  while (performance.now() < until) {
+    // busy work standing in for an expensive render
+  }
+})
 todosStore.subscribe(renderTodos)
 themeStore.subscribe(renderTheme)
 renderCounter()
@@ -77,6 +87,8 @@ app.addEventListener('click', (e) => {
   if (action === 'dec') counterStore.getState().decrement()
   if (action === 'load') void todosStore.getState().load()
   if (action === 'tag') todosStore.getState().tag(`tag-${++tagCount}`)
+  if (action === 'slow') counterStore.getState().incrementSlow()
+  if (action === 'refresh') todosStore.getState().refresh()
   if (action === 'theme') themeStore.setState((s) => ({ mode: s.mode === 'dark' ? 'light' : 'dark' }))
 })
 $('#step').addEventListener('change', (e) => {

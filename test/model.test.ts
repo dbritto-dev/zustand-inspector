@@ -97,6 +97,39 @@ describe('createPanelModel', () => {
     model.dispose()
   })
 
+  it('compares a range with shift-click and clears it on branch, reset or store switch', () => {
+    const { transport, store } = setup()
+    store.getState().inc()
+    store.getState().inc()
+    const model = createPanelModel(transport)
+    const [init, first, second] = model.store.getState().stores.counter.actions
+    model.selectAction(first.id)
+    model.selectRange(second.id)
+    expect(model.store.getState()).toMatchObject({ compareFrom: first.id, selectedAction: second.id, tab: 'diff' })
+    model.selectAction(init.id)
+    expect(model.store.getState().compareFrom).toBeNull()
+
+    model.selectAction(first.id)
+    model.selectRange(second.id)
+    model.command({ type: 'jump', toId: init.id })
+    store.getState().inc() // branches from #init, discarding the compared actions
+    expect(model.store.getState().compareFrom).toBeNull()
+    model.dispose()
+  })
+
+  it('keeps path pins per store', () => {
+    const { transport } = setup()
+    const model = createPanelModel(transport)
+    model.pinPath(['n'])
+    expect(model.store.getState()).toMatchObject({ pinnedPath: ['n'], selectedPath: ['n'] })
+    model.pinPath(null)
+    expect(model.store.getState().pinnedPath).toBeNull()
+    model.pinPath(['n'])
+    model.selectStore('counter')
+    expect(model.store.getState()).toMatchObject({ pinnedPath: null, selectedPath: null, stateSearch: '' })
+    model.dispose()
+  })
+
   it('drops a removed store and ignores other sessions', () => {
     const { transport } = setup()
     const model = createPanelModel(transport)
