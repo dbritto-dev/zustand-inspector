@@ -30,6 +30,8 @@ export function stripRootScheme(css: string): string {
  * - the shadow host fills the devtools pane;
  * - the theme root gets what `<Theme>`'s wrapper sets (scheme, text color, font);
  * - `data-zi-tone` colors serialized values with the theme's syntax tokens;
+ * - `data-zi-quiet-focus` hides the focus ring after a lone modifier key
+ *   (set in mount.tsx), so Shift for a range compare doesn't outline the row;
  * - `data-zi-range="between"` tints the rows between the two ends of a comparison.
  */
 const hostCss = /* css */ `
@@ -46,5 +48,7 @@ const hostCss = /* css */ `
 [data-zi-tone="muted"] { color: var(--color-text-secondary); }
 [data-zi-tone="warning"] { color: var(--color-text-warning); font-style: italic; }
 [data-zi-tone="error"] { color: var(--color-text-error); }
+[data-zi-quiet-focus] :focus-visible,
+[data-zi-quiet-focus] .astryx-item:has(:focus-visible) { outline-color: transparent; }
 [data-zi-range="between"] { background: color-mix(in srgb, var(--color-background-blue) 50%, transparent); }
 `

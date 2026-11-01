@@ -29,6 +29,7 @@ export interface AstryxInspectorHandle {
 }
 
 const FONT_LINK_ID = 'zustand-inspector-astryx-fonts'
+const MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'Meta'])
 
 /**
  * Mount the Astryx panel into any element. It renders in a shadow root so
@@ -90,6 +91,15 @@ export function mountAstryxInspector(
       : null
   observer?.observe(mountPoint)
 
+  // Pressing a modifier on its own (Shift for a range compare) makes the browser
+  // treat the focus as keyboard focus and draw the focus ring around the row you
+  // just clicked. Hide the ring for a lone modifier; the next real key shows it.
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (MODIFIERS.has(e.key)) mountPoint.setAttribute('data-zi-quiet-focus', '')
+    else mountPoint.removeAttribute('data-zi-quiet-focus')
+  }
+  window.addEventListener('keydown', onKeyDown, true)
+
   return {
     model,
     setMode(next) {
@@ -101,6 +111,7 @@ export function mountAstryxInspector(
       if (!mounted) return
       mounted = false
       observer?.disconnect()
+      window.removeEventListener('keydown', onKeyDown, true)
       root.unmount()
       model.dispose()
       shadowHost.remove()
