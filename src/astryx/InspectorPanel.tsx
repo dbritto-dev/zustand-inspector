@@ -561,12 +561,13 @@ function Timeline({
           const end = ends ? (action.id === ends.from ? 'from' : action.id === ends.to ? 'to' : null) : null
           const between = ends?.to !== undefined && isBetween(data, action.id, ends.from, ends.to)
           const comparing = comparePick !== null || ends !== null
+          const isMarked = end !== null || (!comparing && action.id === selected)
           return (
             <ListItem
               key={action.id}
               ref={action.id === selected ? followRef : undefined}
-              isSelected={end !== null || (!comparing && action.id === selected)}
-              data-zi-range={between ? 'between' : undefined}
+              isSelected={isMarked}
+              data-zi-row={isMarked ? 'selected' : between ? 'between' : undefined}
               onClick={(e) => onSelect(action.id, e.shiftKey)}
               startContent={
                 <Text type="supporting" hasTabularNumbers color={end || between ? 'accent' : undefined}>

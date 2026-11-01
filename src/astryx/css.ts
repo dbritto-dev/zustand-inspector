@@ -32,7 +32,9 @@ export function stripRootScheme(css: string): string {
  * - `data-zi-tone` colors serialized values with the theme's syntax tokens;
  * - `data-zi-quiet-focus` hides the focus ring after a lone modifier key
  *   (set in mount.tsx), so Shift for a range compare doesn't outline the row;
- * - `data-zi-range="between"` tints the rows between the two ends of a comparison.
+ * - `data-zi-row` marks action rows: the clicked row (and both ends of a
+ *   comparison) get a blue background, the rows in between a lighter tint.
+ *   Astryx's own selected background is too faint to spot in dark mode.
  */
 const hostCss = /* css */ `
 :host { display: block; height: 100%; }
@@ -50,5 +52,6 @@ const hostCss = /* css */ `
 [data-zi-tone="error"] { color: var(--color-text-error); }
 [data-zi-quiet-focus] :focus-visible,
 [data-zi-quiet-focus] .astryx-item:has(:focus-visible) { outline-color: transparent; }
-[data-zi-range="between"] { background: color-mix(in srgb, var(--color-background-blue) 50%, transparent); }
+[data-zi-root] [data-zi-row="selected"] { background: var(--color-background-blue); }
+[data-zi-root] [data-zi-row="between"] { background: color-mix(in srgb, var(--color-background-blue) 45%, transparent); }
 `
