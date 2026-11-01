@@ -1,3 +1,5 @@
+import { encodeFunction } from './functions'
+
 /**
  * Turns arbitrary store state into JSON-safe tagged values, and back.
  *
@@ -77,7 +79,7 @@ export function serialize(value: unknown, options: SerializeOptions = {}): unkno
       case 'symbol':
         return { $t: 'symbol', v: input.description ?? '' }
       case 'function':
-        return { $t: 'function', name: input.name || 'anonymous' }
+        return encodeFunction(input)
     }
     if (input === null) return null
 

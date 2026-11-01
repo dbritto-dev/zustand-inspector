@@ -28,17 +28,19 @@ import { Tooltip } from '@astryxdesign/core/Tooltip'
 import { Section } from '@astryxdesign/core/Section'
 import { Banner } from '@astryxdesign/core/Banner'
 import { ToggleButton, ToggleButtonGroup } from '@astryxdesign/core/ToggleButton'
-import { CircleDot, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
+import { CircleDot, Database, Flag, SquareFunction, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import { formatPath } from '../diff'
 import { downloadJson, stateFromImport } from '../files'
 import {
   actionsTouching,
+  callCounts,
   changesAt,
   flagsFor,
   formatMs,
   formatSize,
+  functionNameOf,
   historyMayBeIncomplete,
   lastChangeOf,
   rangeDiff,
@@ -51,7 +53,7 @@ import {
 import { snapshotKey, type CostFilter, type PanelModel, type PanelStoreData, type PanelTab } from '../model'
 import { formatDelta, formatTime } from '../panel/format'
 import type { ActionMeta, Change } from '../protocol'
-import { childrenOf, describe, KeyValue, kindOf, summarize, ValueText } from './Value'
+import { childrenOf, describe, type Described, isFunctionValue, KeyValue, kindOf, summarize, ValueText } from './Value'
 
 /*
  * Responsive contract (width of the devtools pane, measured by mount.tsx):
@@ -78,6 +80,11 @@ export function InspectorPanel({ model, width }: { model: PanelModel; width: num
   useEffect(() => {
     if (twoRegions) setDrawerOpen(false)
   }, [twoRegions])
+  // In the drawer, picking a function's actions closes it so the filtered list is visible.
+  const callsOf = useStore(model.store, (s) => s.callsOf)
+  useEffect(() => {
+    if (callsOf && !twoRegions) setDrawerOpen(false)
+  }, [callsOf])
 
   if (!data) {
     return (
@@ -458,6 +465,7 @@ function Timeline({
   const compareFrom = useStore(model.store, (s) => s.compareFrom)
   const costFilter = useStore(model.store, (s) => s.costFilter)
   const pinnedPath = useStore(model.store, (s) => s.pinnedPath)
+  const callsOf = useStore(model.store, (s) => s.callsOf)
   const comparePick = useStore(model.store, (s) => s.comparePick)
   const followRef = useRef<HTMLLIElement>(null)
   const selected = selectedAction ?? data.currentId
@@ -478,6 +486,7 @@ function Timeline({
   const visible = data.actions.filter(
     (a) =>
       (!filter || a.name.toLowerCase().includes(filter)) &&
+      (!callsOf || (a.source === 'app' && functionNameOf(a.name) === callsOf)) &&
       matchesCost(a, costFilter) &&
       (!touching || touching.has(a.id) || a.source === 'init'),
   )
@@ -527,6 +536,16 @@ function Timeline({
             icon={<Icon icon={Pin} size="xsm" />}
             description={`Showing the ${touching?.size ?? 0} actions that changed ${formatPath(pinnedPath)}`}
             onRemove={() => model.pinPath(null)}
+          />
+        ) : null}
+        {callsOf ? (
+          <Token
+            label={`Actions from ${callsOf}()`}
+            size="sm"
+            color="blue"
+            icon={<Icon icon={SquareFunction} size="xsm" />}
+            description={`Showing only the actions recorded by ${callsOf}()`}
+            onRemove={() => model.showCallsOf(null)}
           />
         ) : null}
       </HStack>
@@ -633,7 +652,7 @@ function Timeline({
       </List>
       {visible.length === 0 ? (
         <HStack paddingInline={3} paddingBlock={3}>
-          <Text type="supporting">{emptyTimelineText(filter, costFilter, pinnedPath)}</Text>
+          <Text type="supporting">{emptyTimelineText(filter, costFilter, pinnedPath, callsOf)}</Text>
         </HStack>
       ) : null}
       <HStack paddingInline={3} paddingBlock={2}>
@@ -695,8 +714,14 @@ function isBetween(data: PanelStoreData, id: number, from: number, to: number): 
   return i > a && i < b
 }
 
-function emptyTimelineText(filter: string, costFilter: CostFilter, pinnedPath: Path | null): string {
+function emptyTimelineText(
+  filter: string,
+  costFilter: CostFilter,
+  pinnedPath: Path | null,
+  callsOf: string | null,
+): string {
   if (filter) return `No actions match "${filter}".`
+  if (callsOf) return `${callsOf}() hasn't recorded any actions yet.`
   if (costFilter === 'slow') return 'No slow actions. Every set() finished within a frame.'
   if (costFilter === 'wasted') return 'No wasted updates recorded.'
   if (pinnedPath) return `No recorded action changed ${formatPath(pinnedPath)}.`
@@ -889,6 +914,8 @@ function StateView({ model, data, action }: { model: PanelModel; data: PanelStor
 
   const root = pinnedPath && known ? valueAt(value, pinnedPath) : { found: true, value }
   const query = search.trim().toLowerCase()
+  const callsOf = useStore(model.store, (s) => s.callsOf)
+  const calls = useMemo(() => callCounts(data.actions), [data.actions])
   const items = useMemo(
     () =>
       known && root.found
@@ -896,9 +923,10 @@ function StateView({ model, data, action }: { model: PanelModel; data: PanelStor
             query,
             selectedPath,
             onSelect: (path) => model.selectPath(samePath(path, selectedPath) ? null : path),
+            functions: { calls, callsOf, onShowCalls: (name) => model.showCallsOf(name) },
           })
         : [],
-    [known, root.found, root.value, pinnedPath, showFunctions, query, selectedPath, model],
+    [known, root.found, root.value, pinnedPath, showFunctions, query, selectedPath, model, calls, callsOf],
   )
 
   return (
@@ -938,6 +966,60 @@ interface TreeOptions {
   query: string
   selectedPath: Path | null
   onSelect: (path: Path) => void
+  /** Top-level functions are grouped under "Functions", with how often each ran. */
+  functions?: {
+    calls: ReadonlyMap<string, number>
+    callsOf: string | null
+    onShowCalls: (name: string | null) => void
+  }
+}
+
+function FunctionLabel({ signature, calls }: { signature: Described; calls?: number }) {
+  return (
+    <HStack gap={2} vAlign="center">
+      <StackItem size="fill">
+        <ValueText described={signature} />
+      </StackItem>
+      {calls !== undefined ? (
+        <Text type="supporting" hasTabularNumbers>
+          {calls === 0 ? 'no actions' : `${calls} action${calls === 1 ? '' : 's'}`}
+        </Text>
+      ) : null}
+    </HStack>
+  )
+}
+
+function functionItems(
+  value: unknown,
+  path: Path,
+  options: TreeOptions & { functions: NonNullable<TreeOptions['functions']> },
+): TreeListItemData | null {
+  const { calls, callsOf, onShowCalls } = options.functions
+  const query = options.query
+  const rows: Array<TreeListItemData> = []
+  for (const child of childrenOf(value, true)) {
+    if (!isFunctionValue(child.value)) continue
+    const signature = describe(child.value)
+    if (query && !child.key.text.toLowerCase().includes(query) && !signature.text.toLowerCase().includes(query)) continue
+    rows.push({
+      id: formatPath([...path, child.segment]) || child.segment,
+      label: <FunctionLabel signature={signature} calls={calls.get(child.key.text) ?? 0} />,
+      // Clicking a function shows only the actions it recorded; clicking again clears it.
+      onClick: () => onShowCalls(callsOf === child.key.text ? null : child.key.text),
+      isSelected: callsOf === child.key.text,
+    })
+  }
+  if (rows.length === 0) return null
+  return {
+    id: `${formatPath(path)}#functions`,
+    label: (
+      <Text type="supporting" weight="semibold">
+        Functions ({rows.length})
+      </Text>
+    ),
+    children: rows,
+    isExpanded: true,
+  }
 }
 
 function toTreeItems(
@@ -948,7 +1030,9 @@ function toTreeItems(
   options?: TreeOptions,
 ): Array<TreeListItemData> {
   const items: Array<TreeListItemData> = []
+  const grouped = depth === 0 && showFunctions && options?.functions !== undefined
   for (const child of childrenOf(value, showFunctions)) {
+    if (grouped && isFunctionValue(child.value)) continue
     const childPath = [...path, child.segment]
     const id = formatPath(childPath) || child.segment
     const isContainer = kindOf(child.value) !== 'leaf'
@@ -959,9 +1043,11 @@ function toTreeItems(
       !query || child.key.text.toLowerCase().includes(query) || (!isContainer && shown.text.toLowerCase().includes(query))
     // While searching, keep matches and the branches that lead to them.
     if (query && !selfMatches && children.length === 0) continue
+    // A function stored under its own name reads better as its signature alone.
+    const isNamedFunction = isFunctionValue(child.value) && (child.value as { name?: string }).name === child.key.text
     const item: TreeListItemData = {
       id,
-      label: <KeyValue name={child.key} value={shown} />,
+      label: isNamedFunction ? <FunctionLabel signature={shown} /> : <KeyValue name={child.key} value={shown} />,
     }
     if (options) {
       item.onClick = () => options.onSelect(childPath)
@@ -972,6 +1058,10 @@ function toTreeItems(
       item.isExpanded = query ? true : depth === 0
     }
     items.push(item)
+  }
+  if (grouped && options?.functions) {
+    const group = functionItems(value, path, { ...options, functions: options.functions })
+    if (group) items.push(group)
   }
   return items
 }
@@ -1139,6 +1229,19 @@ function DiffView({
 }
 
 function ChangeValues({ change }: { change: Change }) {
+  if (change.kind === 'changed' && isFunctionValue(change.from) && isFunctionValue(change.to)) {
+    const before = describe(change.from)
+    const after = describe(change.to)
+    // The same signature on both sides: only the function's identity changed.
+    if (before.text === after.text) {
+      return (
+        <HStack gap={1.5} vAlign="center" wrap="wrap">
+          <ValueText described={after} />
+          <Text type="supporting">replaced with a new function</Text>
+        </HStack>
+      )
+    }
+  }
   if (change.kind === 'added') return <ValueText value={change.to} />
   if (change.kind === 'removed') return <ValueText value={change.from} isStruck />
   return (

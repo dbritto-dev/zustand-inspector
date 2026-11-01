@@ -91,3 +91,19 @@ describe('flagsFor', () => {
     expect(formatSize(1_500_000)).toBe('1.5 MB')
   })
 })
+
+describe('store functions and their calls', () => {
+  it('maps action names back to the function that produced them', async () => {
+    const { functionNameOf, callCounts } = await import('../src/analysis')
+    expect(functionNameOf('increment')).toBe('increment')
+    expect(functionNameOf('todos/add')).toBe('add')
+    expect(functionNameOf('todos/load:pending')).toBe('load')
+    const counts = callCounts([
+      { id: 1, name: '@@init', ts: 0, source: 'init' },
+      { id: 2, name: 'todos/load:pending', ts: 1, source: 'app' },
+      { id: 3, name: 'todos/load:fulfilled', ts: 2, source: 'app' },
+      { id: 4, name: 'devtools/import', ts: 3, source: 'devtools' },
+    ])
+    expect([...counts]).toEqual([['load', 2]])
+  })
+})

@@ -1,4 +1,5 @@
 import { isTagged } from '../serialize'
+import { formatFunction } from '../functions'
 
 export function escapeHtml(value: string): string {
   return value
@@ -118,7 +119,7 @@ export function inline(value: unknown, max = 80): string {
     case 'Date':
       return `<span class="zi-date">Date</span> <span class="zi-str">${escapeHtml(String(value.v))}</span>`
     case 'function':
-      return `<span class="zi-fn">ƒ ${escapeHtml(String(value.name))}()</span>`
+      return `<span class="zi-fn">${escapeHtml(formatFunction(value))}</span>`
     case 'redacted':
       return '<span class="zi-redacted" title="Redacted in the page before sending">•••• redacted</span>'
     case 'truncated':
@@ -166,7 +167,7 @@ function previewInner(value: unknown, depth: number): string {
       case 'Date':
         return `Date(${value.v})`
       case 'function':
-        return `ƒ ${value.name}()`
+        return formatFunction(value)
       case 'redacted':
         return '••••'
       case 'bigint':

@@ -2,6 +2,7 @@ import { HStack } from '@astryxdesign/core/HStack'
 import { StackItem } from '@astryxdesign/core/Stack'
 import { Text } from '@astryxdesign/core/Text'
 import { mapKeySegment } from '../analysis'
+import { formatFunction } from '../functions'
 import { isTagged } from '../serialize'
 
 /**
@@ -37,7 +38,7 @@ export function kindOf(value: unknown): ValueKind {
   }
 }
 
-const isFunctionValue = (v: unknown) => isTagged(v) && v.$t === 'function'
+export const isFunctionValue = (v: unknown) => isTagged(v) && v.$t === 'function'
 
 export interface ValueChild {
   /** Stable path segment for ids. */
@@ -112,7 +113,7 @@ export function describe(value: unknown, max = 120): Described {
     case 'Date':
       return { text: `Date(${value.v})`, tone: 'type' }
     case 'function':
-      return { text: `ƒ ${value.name}()`, tone: 'function' }
+      return { text: formatFunction(value), tone: 'function' }
     case 'redacted':
       return { text: '•••• redacted', tone: 'warning' }
     case 'truncated':

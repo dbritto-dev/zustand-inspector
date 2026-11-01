@@ -13,9 +13,12 @@ export default defineConfig({
     // Astryx themes use CSS light-dark(); an older CSS target rewrites it into a dark-only fallback.
     cssTarget: ['chrome123', 'edge123', 'firefox120', 'safari17.5'],
     modulePreload: false,
+    // Compressed but not mangled, so the demo stores' functions keep readable
+    // parameter names (devtools normally run against unminified dev builds).
+    minify: false,
     // The artifact host only allows font files from Google Fonts or data: URIs,
     // so TanStack's bundled fonts are inlined.
     assetsInlineLimit: 512 * 1024,
-    rolldownOptions: { output: { codeSplitting: false } },
+    rolldownOptions: { output: { codeSplitting: false, minify: { compress: true, mangle: false } } },
   },
 })

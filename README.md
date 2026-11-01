@@ -90,6 +90,7 @@ The Astryx panel answers the two questions a state log usually can't.
   - **same value:** a key got a new reference with an equal value, so selectors reading it re-render
 
   The Slow and Wasted filters show only those actions. The toolbar shows the current state size.
+- **Functions.** With the Functions switch on, the store's functions are listed under a "Functions" group at the end of the State tab. Each one shows its signature as written, for example `setStep(step)` or `async load()`, and how many recorded actions it produced. Click one to show only those actions in the list. The signature comes from the function's source in the page. Only the parameter list is sent, and string default values are replaced with `"…"`.
 - **Chrome Performance panel.** Timed actions also appear on a "Zustand" track, through `console.timeStamp`. Turn it off with `performanceTrack: false`.
 - **History branches.** Changing state while viewing the past discards the actions after that state, like undo/redo. The new action shows "from #N".
 

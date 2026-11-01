@@ -106,7 +106,7 @@ describe('inspector middleware', () => {
     makeStore(transport)
     const store = events.find((e) => e.type === 'store')!.payload
     expect(store.state.accessToken).toEqual({ $t: 'redacted' })
-    expect(store.state.inc).toEqual({ $t: 'function', name: 'inc' })
+    expect(store.state.inc).toEqual({ $t: 'function', name: 'inc', params: '' })
     expect(JSON.stringify(events)).not.toContain('super-secret')
   })
 
