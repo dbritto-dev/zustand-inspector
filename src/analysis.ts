@@ -174,22 +174,3 @@ function list(items: ReadonlyArray<string>): string {
   if (quoted.length <= 2) return quoted.join(' and ')
   return `${quoted.slice(0, -1).join(', ')} and ${quoted.at(-1)}`
 }
-
-/**
- * The store function an action most likely came from: `todos/load:pending` → `load`.
- * Matches names given as `set(…, false, 'load')`, `{ type: 'todos/load' }` or inferred from the caller.
- */
-export function functionNameOf(actionName: string): string {
-  return actionName.split(':')[0]!.split('/').pop() ?? actionName
-}
-
-/** How many recorded app actions each store function produced. */
-export function callCounts(actions: ReadonlyArray<ActionMeta>): Map<string, number> {
-  const counts = new Map<string, number>()
-  for (const action of actions) {
-    if (action.source !== 'app') continue
-    const name = functionNameOf(action.name)
-    counts.set(name, (counts.get(name) ?? 0) + 1)
-  }
-  return counts
-}

@@ -85,7 +85,12 @@ function tidy(params: string): string {
   return text.length > MAX_PARAMS ? `${text.slice(0, MAX_PARAMS - 1)}…` : text
 }
 
-/** A readable signature: `increment()`, `setStep(step)`, `async load()`, `class Todo`. */
+/**
+ * How a function reads in the state tree, next to its key: `(step) => {…}`,
+ * `async () => {…}`, `function* (ids) {…}`, `class Todo`. The key already names
+ * the function, so the name is shown only when it adds something (a class, a
+ * bound or native function).
+ */
 export function formatFunction(value: object): string {
   const { name: rawName, params: rawParams, kind } = value as { name?: unknown; params?: unknown; kind?: unknown }
   const name = typeof rawName === 'string' && rawName ? rawName : 'anonymous'
@@ -94,14 +99,16 @@ export function formatFunction(value: object): string {
     case 'class':
       return `class ${name}`
     case 'native':
-      return `${name}() [native code]`
+      return `${name}() { [native code] }`
+    case 'bound':
+      return `${name}() {…}`
     case 'async':
-      return `async ${name}(${params})`
+      return `async (${params}) => {…}`
     case 'generator':
-      return `${name}*(${params})`
+      return `function* (${params}) {…}`
     case 'async generator':
-      return `async ${name}*(${params})`
+      return `async function* (${params}) {…}`
     default:
-      return `${name}(${params})`
+      return `(${params}) => {…}`
   }
 }

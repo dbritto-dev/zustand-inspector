@@ -42,8 +42,6 @@ export interface PanelState {
   selectedPath: Path | null
   /** Pinned path: the action list, state and diff narrow to it. */
   pinnedPath: Path | null
-  /** Show only the actions produced by this store function (see `functionNameOf`). */
-  callsOf: string | null
   /** Range comparison: diff from this action to the selected one. */
   compareFrom: number | null
   /** Compare mode: which end of the comparison the next click picks. */
@@ -61,7 +59,6 @@ export interface PanelModel {
   selectAction(id: number | null): void
   setTab(tab: PanelTab): void
   setFilter(filter: string): void
-  showCallsOf(name: string | null): void
   setShowFunctions(show: boolean): void
   selectPath(path: Path | null): void
   pinPath(path: Path | null): void
@@ -97,7 +94,6 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
     snapshots: {},
     selectedPath: null,
     pinnedPath: null,
-    callsOf: null,
     compareFrom: null,
     comparePick: null,
     costFilter: 'all',
@@ -237,7 +233,6 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
         selectedAction: null,
         selectedPath: null,
         pinnedPath: null,
-        callsOf: null,
         compareFrom: null,
         comparePick: null,
         stateSearch: '',
@@ -286,9 +281,6 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
     },
     setTab(tab) {
       store.setState({ tab })
-    },
-    showCallsOf(callsOf) {
-      store.setState({ callsOf })
     },
     setFilter(filter) {
       store.setState({ filter })

@@ -24,15 +24,15 @@ describe('function signatures', () => {
     }
     const encoded = serialize(state) as Record<string, unknown>
     expect(encoded.increment).toEqual({ $t: 'function', name: 'increment', params: '' })
-    expect(formatFunction(encoded.setStep as object)).toBe('setStep(step)')
-    expect(formatFunction(encoded.load as object)).toBe('async load()')
-    expect(formatFunction(encoded.ids as object)).toBe('ids*()')
+    expect(formatFunction(encoded.setStep as object)).toBe('(step) => {…}')
+    expect(formatFunction(encoded.load as object)).toBe('async () => {…}')
+    expect(formatFunction(encoded.ids as object)).toBe('function* () {…}')
     expect(formatFunction(encoded.Todo as object)).toBe('class Todo')
-    expect(formatFunction(encoded.push as object)).toBe('push() [native code]')
+    expect(formatFunction(encoded.push as object)).toBe('push() { [native code] }')
   })
 
   it('keeps older exports without params readable', () => {
-    expect(formatFunction({ $t: 'function', name: 'increment' })).toBe('increment()')
-    expect(formatFunction(encodeFunction(function () {}))).toBe('anonymous()')
+    expect(formatFunction({ $t: 'function', name: 'increment' })).toBe('() => {…}')
+    expect(formatFunction(encodeFunction(function (a: number) { return a }))).toBe('(a) => {…}')
   })
 })
