@@ -28,7 +28,7 @@ import { Tooltip } from '@astryxdesign/core/Tooltip'
 import { Section } from '@astryxdesign/core/Section'
 import { Banner } from '@astryxdesign/core/Banner'
 import { ToggleButton, ToggleButtonGroup } from '@astryxdesign/core/ToggleButton'
-import { ChevronDown, ChevronRight, CircleDot, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, CircleDot, SkipBack, StepBack, StepForward, Database, Flag, GitBranch, GitCompareArrows, Pause, Pin, PinOff, Play, SkipForward, Undo2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import { formatPath } from '../diff'
@@ -301,7 +301,7 @@ function PanelHeader({ model, data, compact }: { model: PanelModel; data: PanelS
           {filterInput}
         </LayoutHeader>
       ) : null}
-      <Scrubber model={model} data={data} />
+      <Scrubber model={model} data={data} compact={compact} />
       <ImportDialog model={model} storeName={data.name} isOpen={importOpen} onOpenChange={setImportOpen} />
     </VStack>
   )
@@ -369,10 +369,11 @@ function ImportDialog({
   )
 }
 
-function Scrubber({ model, data }: { model: PanelModel; data: PanelStoreData }) {
+function Scrubber({ model, data, compact }: { model: PanelModel; data: PanelStoreData; compact: boolean }) {
   const index = Math.max(0, data.actions.findIndex((a) => a.id === data.currentId))
   const last = data.actions.at(-1)
   const atLatest = data.currentId === last?.id
+  const atStart = index === 0
   const frame = useRef<number | null>(null)
   const pending = useRef(0)
   const actionsRef = useRef(data.actions)
@@ -398,13 +399,43 @@ function Scrubber({ model, data }: { model: PanelModel; data: PanelStoreData }) 
     })
   }
   const toIndex = (value: number | [number, number]) => (Array.isArray(value) ? value[0] : value)
+  // Steps build on a jump still waiting for its frame, so quick clicks add up.
+  const step = (delta: number) => {
+    const from = frame.current !== null ? pending.current : index
+    const to = Math.min(Math.max(from + delta, 0), data.actions.length - 1)
+    setDragIndex(null)
+    if (to !== from) jumpToIndex(to)
+  }
+  const toEdge = (i: number) => {
+    setDragIndex(null)
+    jumpToIndex(i)
+  }
+  const empty = data.actions.length < 2
 
   return (
     <LayoutHeader hasDivider label="Time travel">
-      <HStack gap={3} vAlign="center">
+      <HStack gap={compact ? 1 : 2} vAlign="center">
         <Text type="supporting" hasTabularNumbers>
           {position(dragIndex ?? index, data.actions.length)}
         </Text>
+        <IconButton
+          label="Back to start"
+          tooltip={atStart ? 'Already at the first recorded state' : 'Jump to the first recorded state'}
+          size="sm"
+          variant="ghost"
+          icon={<Icon icon={SkipBack} />}
+          isDisabled={atStart || empty}
+          onClick={() => toEdge(0)}
+        />
+        <IconButton
+          label="Previous state"
+          tooltip="Step back one action"
+          size="sm"
+          variant="ghost"
+          icon={<Icon icon={StepBack} />}
+          isDisabled={atStart || empty}
+          onClick={() => step(-1)}
+        />
         <StackItem size="fill">
           <Slider
             label="Time travel"
@@ -423,22 +454,38 @@ function Scrubber({ model, data }: { model: PanelModel; data: PanelStoreData }) 
             onChangeEnd={(value: number | [number, number]) => jumpToIndex(toIndex(value))}
           />
         </StackItem>
-        {/* Always rendered, so the slider never changes width under the pointer
-            when a drag leaves the latest state. */}
-        <Button
-          label="Back to latest"
+        {/* Always rendered (disabled at the ends), so the slider never changes
+            width under the pointer when a drag leaves the latest state. */}
+        <IconButton
+          label="Next state"
+          tooltip="Step forward one action"
           size="sm"
           variant="ghost"
-          icon={<Icon icon={SkipForward} />}
-          isDisabled={atLatest || !last}
-          tooltip={atLatest ? 'Already at the latest state' : 'Return to the latest state'}
-          onClick={() => {
-            if (!last) return
-            setDragIndex(null)
-            model.selectAction(null)
-            model.command({ type: 'jump', toId: last.id })
-          }}
+          icon={<Icon icon={StepForward} />}
+          isDisabled={atLatest || empty}
+          onClick={() => step(1)}
         />
+        {compact ? (
+          <IconButton
+            label="Back to latest"
+            tooltip={atLatest ? 'Already at the latest state' : 'Return to the latest state'}
+            size="sm"
+            variant="ghost"
+            icon={<Icon icon={SkipForward} />}
+            isDisabled={atLatest || !last}
+            onClick={() => toEdge(data.actions.length - 1)}
+          />
+        ) : (
+          <Button
+            label="Back to latest"
+            size="sm"
+            variant="ghost"
+            icon={<Icon icon={SkipForward} />}
+            isDisabled={atLatest || !last}
+            tooltip={atLatest ? 'Already at the latest state' : 'Return to the latest state'}
+            onClick={() => toEdge(data.actions.length - 1)}
+          />
+        )}
       </HStack>
     </LayoutHeader>
   )

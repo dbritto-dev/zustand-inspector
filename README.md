@@ -6,7 +6,7 @@ Framework-agnostic devtools for [Zustand](https://github.com/pmndrs/zustand), bu
 - **Action log** with names from `set(partial, replace, action)`, payloads from `{ type, ...payload }`, and caller-name inference when no name is given.
 - **Structural diffs per action**, including per-entry Map and Set changes.
 - **Redaction in the page**, before anything is sent. Keys ending in `token`, `password`, `secret`, `apiKey`, `cookie` and similar are redacted by default.
-- **Pause and resume, commit, reset, export and import**, plus a scrubber and keyboard navigation (↑ ↓ Enter Esc).
+- **Pause and resume, commit, reset, export and import**, plus a scrubber with back to start, previous, next and back to latest, and keyboard navigation (↑ ↓ Enter Esc).
 - **Late-mount safe.** Open the panel whenever you like and it syncs the full history.
 - **Production-safe.** It becomes a no-op when `process.env.NODE_ENV === 'production'`.
 
