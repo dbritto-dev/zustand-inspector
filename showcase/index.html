@@ -50,7 +50,7 @@
     content: counter(step); display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
     background: var(--accent); color: var(--surface); font: 500 12px var(--mono);
   }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; align-items: start; }
   .card {
     background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
     display: grid; gap: 10px; align-content: start; min-width: 0;
@@ -85,7 +85,7 @@
     <li>Click + a few times</li>
     <li>Load async todos</li>
     <li>Open the Diff tab on an action</li>
-    <li>Jump back with ⤺ or the slider</li>
+    <li>Jump back with the slider or Jump here</li>
   </ol>
   <div id="app" class="grid"></div>
 </div>

@@ -11,6 +11,9 @@ export default defineConfig({
     emptyOutDir: true,
     target: 'es2022',
     modulePreload: false,
+    // The artifact host only allows font files from Google Fonts or data: URIs,
+    // so TanStack's bundled fonts are inlined.
+    assetsInlineLimit: 512 * 1024,
     rolldownOptions: { output: { codeSplitting: false } },
   },
 })

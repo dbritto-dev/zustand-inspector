@@ -9,6 +9,7 @@ import {
   formatTime,
   inline,
   nodeKind,
+  preview,
   summary,
 } from './format'
 import { css, STYLE_ID } from './styles'
@@ -77,6 +78,7 @@ export class PanelView {
     timeline: HTMLUListElement
     title: HTMLSpanElement
     sub: HTMLSpanElement
+    currentChip: HTMLSpanElement
     jump: HTMLButtonElement
     tabs: HTMLDivElement
     body: HTMLDivElement
@@ -98,7 +100,7 @@ export class PanelView {
         <button class="zi-btn" data-ref="reset" title="Back to the initial state">Reset</button>
         <span class="zi-spacer"></span>
         <input class="zi-input" data-ref="filter" type="search" placeholder="Filter actions" aria-label="Filter actions" />
-        <label class="zi-note" title="Show store actions (functions) in the state tree"><input type="checkbox" data-ref="fns" /> fns</label>
+        <label class="zi-note zi-check" title="Show store actions (functions) in the state tree"><input type="checkbox" data-ref="fns" /> fns</label>
         <button class="zi-btn" data-ref="exportBtn" title="Download this store's history as JSON">Export</button>
         <button class="zi-btn" data-ref="importBtn" title="Load state from an exported JSON file">Import</button>
         <input type="file" accept="application/json,.json" data-ref="file" class="zi-hidden" />
@@ -111,13 +113,18 @@ export class PanelView {
         <ul class="zi-timeline" tabindex="0" aria-label="Actions" data-ref="timeline"></ul>
         <section class="zi-detail">
           <div class="zi-detail-head">
-            <span class="zi-detail-title" data-ref="title"></span>
-            <span class="zi-detail-sub" data-ref="sub"></span>
-            <button class="zi-btn zi-primary" data-ref="jump" title="Restore the store to this action">Jump here</button>
-            <div class="zi-tabs" role="tablist" data-ref="tabs">
-              <button class="zi-tab" role="tab" data-tab="state">State</button>
-              <button class="zi-tab" role="tab" data-tab="diff">Diff</button>
-              <button class="zi-tab" role="tab" data-tab="action">Action</button>
+            <div class="zi-detail-heading">
+              <span class="zi-detail-title" data-ref="title"></span>
+              <span class="zi-detail-sub" data-ref="sub"></span>
+              <span class="zi-current-chip" data-ref="currentChip" hidden>current</span>
+            </div>
+            <div class="zi-detail-actions">
+              <button class="zi-btn zi-primary" data-ref="jump" title="Restore the store to this action" hidden>Jump here</button>
+              <div class="zi-tabs" role="tablist" data-ref="tabs">
+                <button class="zi-tab" role="tab" data-tab="state">State</button>
+                <button class="zi-tab" role="tab" data-tab="diff">Diff</button>
+                <button class="zi-tab" role="tab" data-tab="action">Action</button>
+              </div>
             </div>
           </div>
           <div class="zi-body" data-ref="body"></div>
@@ -147,6 +154,7 @@ export class PanelView {
       timeline: ref('timeline'),
       title: ref('title'),
       sub: ref('sub'),
+      currentChip: ref('currentChip'),
       jump: ref('jump'),
       tabs: ref('tabs'),
       body: ref('body'),
@@ -157,6 +165,7 @@ export class PanelView {
     this.setTheme(options.theme ?? 'dark')
     this.#bindDom()
     this.#bindTransport()
+    this.#observeWidth()
 
     // Late-mount sync: the page answers with a `store` event per recorder.
     this.#transport.reconnect?.()
@@ -195,6 +204,19 @@ export class PanelView {
       cancelAnimationFrame(this.#frame)
     }
     this.root.remove()
+  }
+
+  /** Toggle the stacked layout from the pane's own width (TanStack panes can be split or narrow). */
+  #observeWidth(): void {
+    const apply = (width: number) => {
+      if (width > 0) this.root.classList.toggle('zi-narrow', width < 600)
+    }
+    if (typeof ResizeObserver === 'function') {
+      const observer = new ResizeObserver((entries) => apply(entries[0]?.contentRect.width ?? 0))
+      observer.observe(this.root)
+      this.#disposers.push(() => observer.disconnect())
+    }
+    apply(this.root.getBoundingClientRect().width)
   }
 
   // ───────────────────────────── transport ─────────────────────────────
@@ -511,14 +533,20 @@ export class PanelView {
     }
     if (!action) {
       el.title.textContent = ''
+      el.title.title = ''
       el.sub.textContent = ''
-      el.jump.disabled = true
+      el.currentChip.hidden = true
+      el.jump.hidden = true
       el.body.innerHTML = '<p class="zi-note">Select an action.</p>'
       return
     }
+    const isCurrent = action.id === store.currentId
     el.title.textContent = `#${action.id} ${action.name}`
-    el.sub.textContent = formatTime(action.ts) + (action.id === store.currentId ? ' · current' : '')
-    el.jump.disabled = action.id === store.currentId
+    el.title.title = `#${action.id} ${action.name}`
+    el.sub.textContent = formatTime(action.ts)
+    el.currentChip.hidden = !isCurrent
+    // Only offer a jump when it would change something.
+    el.jump.hidden = isCurrent
 
     const scroll = el.body.scrollTop
     if (this.#tab === 'state') el.body.innerHTML = this.#stateHtml(store, action)
@@ -584,7 +612,7 @@ export class PanelView {
   #node(keyHtml: string, value: unknown, path: string, depth: number): string {
     const kind = nodeKind(value)
     if (kind === 'leaf') {
-      return `<li class="zi-node"><div class="zi-line"><span class="zi-toggle-spacer"></span>${keyHtml}${inline(value)}</div></li>`
+      return `<li class="zi-node"><div class="zi-line"><span class="zi-toggle-spacer"></span>${keyHtml}${valueHtml(value)}</div></li>`
     }
     const children = childrenOf(value, this.#showFunctions)
     const open = children.length > 0 && this.#isOpen(path, depth)
@@ -595,9 +623,14 @@ export class PanelView {
     const body = open
       ? `<ul class="zi-tree">${children.map((c) => this.#node(c.keyHtml, c.value, `${path}/${c.key}`, depth + 1)).join('')}</ul>`
       : ''
-    const label = open ? summary(value, this.#showFunctions) : inline(value)
+    const label = open ? summary(value, this.#showFunctions) : valueHtml(value)
     return `<li class="zi-node"><div class="zi-line">${toggle}${keyHtml}${label}</div>${body}</li>`
   }
+}
+
+/** A value that shortens with "…" when the pane is narrow; hover shows the longer preview. */
+function valueHtml(value: unknown): string {
+  return `<span class="zi-val" title="${escapeHtml(preview(value, 400))}">${inline(value, 200)}</span>`
 }
 
 function key(storeId: string, id: number): string {

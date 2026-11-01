@@ -34,7 +34,6 @@ export const css = /* css */ `
   height: 100%;
   min-height: 0;
   width: 100%;
-  container-type: inline-size;
   background: var(--zi-bg);
   color: var(--zi-fg);
   font: 12px/1.45 var(--zi-sans);
@@ -129,11 +128,21 @@ export const css = /* css */ `
 
 .zi-detail { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
 .zi-detail-head {
-  display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--zi-border);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 10px;
+  border-bottom: 1px solid var(--zi-border);
 }
-.zi-detail-title { font-family: var(--zi-mono); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.zi-detail-sub { color: var(--zi-muted); font: 11px var(--zi-mono); }
-.zi-tabs { display: flex; gap: 2px; margin-left: auto; }
+.zi-detail-heading { display: flex; flex: 1 1 220px; align-items: baseline; gap: 8px; min-width: 0; }
+.zi-detail-title {
+  font-family: var(--zi-mono); font-weight: 600; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.zi-detail-sub { flex: none; color: var(--zi-muted); font: 11px var(--zi-mono); white-space: nowrap; }
+.zi-current-chip {
+  flex: none; padding: 0 6px; border-radius: 4px; font: 10px/18px var(--zi-sans); letter-spacing: .03em;
+  text-transform: uppercase; color: var(--zi-current); background: var(--zi-bg-hover);
+}
+.zi-detail-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.zi-tabs { display: flex; gap: 2px; }
 .zi-tab {
   height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; color: var(--zi-muted);
 }
@@ -143,7 +152,10 @@ export const css = /* css */ `
 
 .zi-tree { margin: 0; padding: 0; list-style: none; }
 .zi-tree .zi-tree { padding-left: 16px; }
-.zi-node > .zi-line { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.zi-node > .zi-line { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; min-width: 0; }
+.zi-line > .zi-key, .zi-line > .zi-index, .zi-line > .zi-mapkey, .zi-line > .zi-arrow,
+.zi-line > .zi-toggle, .zi-line > .zi-toggle-spacer { flex: none; }
+.zi-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .zi-toggle {
   width: 14px; padding: 0; border: 0; background: transparent; cursor: pointer; color: var(--zi-muted);
   font-size: 10px; line-height: 1;
@@ -178,10 +190,21 @@ export const css = /* css */ `
 }
 .zi-empty code { font-family: var(--zi-mono); color: var(--zi-fg); }
 .zi-note { color: var(--zi-muted); font-family: var(--zi-sans); }
-.zi-hidden { display: none !important; }
+.zi-hidden, .zi-root [hidden] { display: none !important; }
 
-@container (max-width: 560px) {
-  .zi-main { flex-direction: column; }
-  .zi-timeline { flex: 0 0 40%; max-width: none; border-right: 0; border-bottom: 1px solid var(--zi-border); }
+.zi-check { display: inline-flex; align-items: center; gap: 4px; }
+.zi-check input { margin: 0; }
+
+/* Narrow panes (phones, split panes): stack timeline over detail and let the
+   whole panel scroll, instead of squeezing both into a short pane. */
+.zi-root.zi-narrow { overflow-y: auto; }
+.zi-narrow .zi-main { flex: none; flex-direction: column; }
+.zi-narrow .zi-timeline {
+  flex: none; max-width: none; min-width: 0; max-height: 220px;
+  border-right: 0; border-bottom: 1px solid var(--zi-border);
 }
+.zi-narrow .zi-detail { flex: none; }
+.zi-narrow .zi-body { flex: none; overflow: visible; overflow-x: auto; }
+.zi-narrow .zi-input { flex: 1 1 140px; width: auto; }
+.zi-narrow .zi-toolbar .zi-spacer { display: none; }
 `

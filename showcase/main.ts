@@ -110,3 +110,17 @@ new TanStackDevtoolsCore({
   config: { defaultOpen: true, theme: prefersDark() ? 'dark' : 'light' },
   plugins: [zustandInspectorPlugin({ defaultOpen: true })],
 }).mount(host)
+
+// The strip under the TanStack header lists *closed* plugins. Ours is the only
+// one and it starts open, so the strip would sit there empty. TanStack folds it
+// only when it *becomes* empty, so fold it once here when it starts empty.
+function foldEmptyPluginStrip(triesLeft = 60) {
+  const strip = document.querySelector('[data-testid="plugins-strip"]')
+  const toggle = document.querySelector<HTMLButtonElement>('[data-testid="workbench-collapse-toggle"]')
+  if (strip && toggle) {
+    if (strip.children.length === 0 && toggle.getAttribute('aria-expanded') === 'true') toggle.click()
+    return
+  }
+  if (triesLeft > 0) requestAnimationFrame(() => foldEmptyPluginStrip(triesLeft - 1))
+}
+foldEmptyPluginStrip()
