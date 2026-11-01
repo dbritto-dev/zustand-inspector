@@ -30,8 +30,7 @@ export function stripRootScheme(css: string): string {
  * - the shadow host fills the devtools pane;
  * - the theme root gets what `<Theme>`'s wrapper sets (scheme, text color, font);
  * - `data-zi-tone` colors serialized values with the theme's syntax tokens;
- * - `data-zi-range` marks the rows of a comparison: a blue bar on both ends
- *   and everything between, and a tint on the rows in between.
+ * - `data-zi-range="between"` tints the rows between the two ends of a comparison.
  */
 const hostCss = /* css */ `
 :host { display: block; height: 100%; }
@@ -47,6 +46,5 @@ const hostCss = /* css */ `
 [data-zi-tone="muted"] { color: var(--color-text-secondary); }
 [data-zi-tone="warning"] { color: var(--color-text-warning); font-style: italic; }
 [data-zi-tone="error"] { color: var(--color-text-error); }
-[data-zi-range] { box-shadow: inset 3px 0 0 var(--color-icon-blue); }
 [data-zi-range="between"] { background: color-mix(in srgb, var(--color-background-blue) 50%, transparent); }
 `

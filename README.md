@@ -83,7 +83,7 @@ The Astryx panel answers the two questions a state log usually can't.
   - the action that last changed it
   - every recorded action that touched it, with before and after values
 - **Pin a path.** "Pin path" narrows the action list, the state tree and the diff to that path.
-- **Compare two states.** Click Compare, then pick the initial state and the final state. A banner says which step you're on, the two actions are tagged From and To, the actions in between are highlighted, and the detail header names both ends. Shift-click a second action does the same in one step.
+- **Compare two states.** Click Compare, then pick the initial state and the final state. A banner says which step you're on, the two actions are tagged From and To, the actions in between are tinted, and the detail header names both ends. Shift-click a second action does the same in one step; while Shift is held, the selected action shows its From tag.
 - **Cost per action.** The `inspector` middleware times each `set()` including the store's synchronous listeners, and counts the listeners it notified. The Action tab shows the time, listeners, state size and findings. The list flags:
   - **slow:** longer than a frame (16 ms)
   - **no-op:** a new state object with no changed value, so every listener ran for nothing

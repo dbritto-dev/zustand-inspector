@@ -461,7 +461,12 @@ function Timeline({
   const comparePick = useStore(model.store, (s) => s.comparePick)
   const followRef = useRef<HTMLLIElement>(null)
   const selected = selectedAction ?? data.currentId
-  const ends = compareEnds(data, compareFrom, comparePick === 'to' ? null : selected)
+  const shiftHeld = useShiftHeld()
+  // Holding Shift previews the start of a shift-click comparison: the selected
+  // action is tagged From until Shift is released.
+  const ends =
+    compareEnds(data, compareFrom, comparePick === 'to' ? null : selected) ??
+    (shiftHeld && comparePick === null ? { from: selected } : null)
   const currentIndex = data.actions.findIndex((a) => a.id === data.currentId)
   const futureFrom = data.actions[currentIndex + 1]?.id ?? Infinity
   const first = data.actions[0]?.ts ?? 0
@@ -561,7 +566,7 @@ function Timeline({
               key={action.id}
               ref={action.id === selected ? followRef : undefined}
               isSelected={end !== null || (!comparing && action.id === selected)}
-              data-zi-range={end ?? (between ? 'between' : undefined)}
+              data-zi-range={between ? 'between' : undefined}
               onClick={(e) => onSelect(action.id, e.shiftKey)}
               startContent={
                 <Text type="supporting" hasTabularNumbers color={end || between ? 'accent' : undefined}>
@@ -635,6 +640,36 @@ function Timeline({
       </HStack>
     </VStack>
   )
+}
+
+function isEditable(target: EventTarget | undefined): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
+}
+
+/** Whether Shift is held down while the page has focus. */
+function useShiftHeld(): boolean {
+  const [held, setHeld] = useState(false)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Shift') return
+      // Shift while typing (capital letters) isn't a compare gesture.
+      if (e.type === 'keydown' && isEditable(e.composedPath()[0])) return
+      setHeld(e.type === 'keydown')
+    }
+    const release = () => setHeld(false)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKey)
+    window.addEventListener('blur', release)
+    document.addEventListener('visibilitychange', release)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
+      window.removeEventListener('blur', release)
+      document.removeEventListener('visibilitychange', release)
+    }
+  }, [])
+  return held
 }
 
 /**
