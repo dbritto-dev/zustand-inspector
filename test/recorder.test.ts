@@ -201,6 +201,44 @@ describe('inspector middleware', () => {
   })
 })
 
+describe('branching while time travelling', () => {
+  it('discards the abandoned future when the app changes state in the past', () => {
+    const transport = createMemoryTransport()
+    const events = collect(transport)
+    const store = createStore<{ n: number; inc: () => void }>()(
+      inspector((set) => ({ n: 0, inc: () => set((s) => ({ n: s.n + 1 }), false, 'inc') }), {
+        name: 'branch',
+        transport,
+      }),
+    )
+    const recorder = getRecorders()[0]
+    for (let i = 0; i < 4; i++) store.getState().inc()
+    const ids = recorder.actions.map((a) => a.id) // init + 4 incs
+    recorder.handle({ type: 'jump', toId: ids[1] }) // n = 1
+    expect(store.getState().n).toBe(1)
+
+    store.getState().inc() // n = 2, on a new branch
+    expect(store.getState().n).toBe(2)
+    const names = recorder.actions.map((a) => a.id)
+    expect(names).toEqual([ids[0], ids[1], ids.at(-1)! + 1])
+    const last = recorder.actions.at(-1)!
+    expect(last.branch).toEqual({ fromId: ids[1], count: 3 })
+    expect(last.changes).toEqual([{ path: ['n'], kind: 'changed', from: 1, to: 2 }])
+    expect(events.filter((e) => e.type === 'action').at(-1)!.payload.action.branch).toEqual({ fromId: ids[1], count: 3 })
+
+    // Scrubbing the new history now shows the states that actually happened.
+    expect(recorder.actions.map((a) => recorder.stateAt(a.id)!.n)).toEqual([0, 1, 2])
+  })
+
+  it('does not branch when the change happens at the latest state', () => {
+    const transport = createMemoryTransport()
+    const store = createStore<{ n: number }>()(inspector(() => ({ n: 0 }), { name: 'linear', transport }))
+    store.setState({ n: 1 }, false, 'a')
+    store.setState({ n: 2 }, false, 'b')
+    expect(getRecorders()[0].actions.every((a) => a.branch === undefined)).toBe(true)
+  })
+})
+
 describe('inspectStore (no middleware)', () => {
   it('records changes and can still time travel', () => {
     const transport = createMemoryTransport()

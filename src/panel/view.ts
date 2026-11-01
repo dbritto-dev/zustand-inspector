@@ -235,6 +235,11 @@ export class PanelView {
     on('action', (msg) => {
       const store = this.#stores.get(msg.storeId)
       if (!store) return
+      const branch = msg.action.branch
+      if (branch) {
+        store.actions = store.actions.filter((a) => a.id <= branch.fromId)
+        if (this.#selectedAction !== null && this.#selectedAction > branch.fromId) this.#selectedAction = null
+      }
       store.actions.push(msg.action)
       const overflow = store.actions.length - store.maxHistory
       if (overflow > 0) store.actions.splice(0, overflow)

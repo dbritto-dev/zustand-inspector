@@ -126,16 +126,24 @@ export function createPanelModel(transport: Transport = getDefaultTransport()): 
 
   on('store', upsert)
   on('action', (msg) => {
+    const branch = msg.action.branch
     const ok = updateStore(msg.storeId, (s) => {
-      const actions = [...s.actions, msg.action]
+      // A branch discards the actions after the state it started from.
+      const kept = branch ? s.actions.filter((a) => a.id <= branch.fromId) : s.actions
+      const actions = [...kept, msg.action]
       const overflow = actions.length - s.maxHistory
       if (overflow > 0) actions.splice(0, overflow)
       return { actions, currentId: msg.currentId, dropped: msg.dropped, state: msg.state }
     })
     if (ok) {
-      store.setState((s) => ({
-        snapshots: { ...s.snapshots, [snapshotKey(msg.storeId, msg.currentId)]: msg.state },
-      }))
+      store.setState((s) => {
+        const keepSelection =
+          !branch || s.selectedStore !== msg.storeId || s.selectedAction === null || s.selectedAction <= branch.fromId
+        return {
+          selectedAction: keepSelection ? s.selectedAction : null,
+          snapshots: { ...s.snapshots, [snapshotKey(msg.storeId, msg.currentId)]: msg.state },
+        }
+      })
     }
   })
   on('jumped', (msg) => {

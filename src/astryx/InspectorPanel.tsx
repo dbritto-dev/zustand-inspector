@@ -24,7 +24,8 @@ import { TreeList, type TreeListItemData } from '@astryxdesign/core/TreeList'
 import { VStack } from '@astryxdesign/core/VStack'
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { FileInput } from '@astryxdesign/core/FileInput'
-import { Database, History, Pause, Play, SkipForward, Undo2 } from 'lucide-react'
+import { Tooltip } from '@astryxdesign/core/Tooltip'
+import { Database, GitBranch, Pause, Play, SkipForward, Undo2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import { formatPath } from '../diff'
@@ -118,6 +119,12 @@ export function InspectorPanel({ model, width }: { model: PanelModel; width: num
       ) : null}
     </>
   )
+}
+
+/** `" 3 / 12"`: the index is padded with figure spaces so the label keeps its width. */
+function position(index: number, total: number): string {
+  const width = String(total).length
+  return `${String(index + 1).padStart(width, '\u2007')} / ${total}`
 }
 
 function statusOf(data: PanelStoreData): { variant: 'success' | 'warning' | 'accent'; label: string } {
@@ -302,25 +309,35 @@ function Scrubber({ model, data }: { model: PanelModel; data: PanelStoreData }) 
   const atLatest = data.currentId === last?.id
   const frame = useRef<number | null>(null)
   const pending = useRef(0)
+  const actionsRef = useRef(data.actions)
+  actionsRef.current = data.actions
+  // While dragging, the slider shows the position it reported, not the store's
+  // current position: that one lags a frame behind, and feeding it back makes
+  // the thumb run ahead of the pointer.
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  useEffect(() => {
+    if (dragIndex !== null && dragIndex === index) setDragIndex(null)
+  }, [dragIndex, index])
 
   const jumpToIndex = (i: number) => {
     pending.current = i
     if (frame.current !== null) return
     frame.current = requestAnimationFrame(() => {
       frame.current = null
-      const action = data.actions[pending.current]
+      const action = actionsRef.current[pending.current]
       if (action) {
         model.selectAction(null)
         model.command({ type: 'jump', toId: action.id })
       }
     })
   }
+  const toIndex = (value: number | [number, number]) => (Array.isArray(value) ? value[0] : value)
 
   return (
     <LayoutHeader hasDivider label="Time travel">
       <HStack gap={3} vAlign="center">
         <Text type="supporting" hasTabularNumbers>
-          {index + 1} / {data.actions.length}
+          {position(dragIndex ?? index, data.actions.length)}
         </Text>
         <StackItem size="fill">
           <Slider
@@ -330,27 +347,32 @@ function Scrubber({ model, data }: { model: PanelModel; data: PanelStoreData }) 
             width="100%"
             min={0}
             max={Math.max(1, data.actions.length - 1)}
-            value={index}
+            value={dragIndex ?? index}
             isDisabled={data.actions.length < 2}
             disabledMessage="Record a few actions first"
-            onChange={(value: number | [number, number]) => jumpToIndex(Array.isArray(value) ? value[0] : value)}
+            onChange={(value: number | [number, number]) => {
+              setDragIndex(toIndex(value))
+              jumpToIndex(toIndex(value))
+            }}
+            onChangeEnd={(value: number | [number, number]) => jumpToIndex(toIndex(value))}
           />
         </StackItem>
-        {!atLatest && last ? (
-          <>
-            <Token label="Time travelling" color="blue" size="sm" icon={<Icon icon={History} size="xsm" />} />
-            <Button
-              label="Back to latest"
-              size="sm"
-              variant="ghost"
-              icon={<Icon icon={SkipForward} />}
-              onClick={() => {
-                model.selectAction(null)
-                model.command({ type: 'jump', toId: last.id })
-              }}
-            />
-          </>
-        ) : null}
+        {/* Always rendered, so the slider never changes width under the pointer
+            when a drag leaves the latest state. */}
+        <Button
+          label="Back to latest"
+          size="sm"
+          variant="ghost"
+          icon={<Icon icon={SkipForward} />}
+          isDisabled={atLatest || !last}
+          tooltip={atLatest ? 'Already at the latest state' : 'Return to the latest state'}
+          onClick={() => {
+            if (!last) return
+            setDragIndex(null)
+            model.selectAction(null)
+            model.command({ type: 'jump', toId: last.id })
+          }}
+        />
       </HStack>
     </LayoutHeader>
   )
@@ -410,6 +432,17 @@ function Timeline({
                     </Text>
                   </StackItem>
                   {action.source !== 'app' ? <Token label={action.source} size="sm" color="gray" /> : null}
+                  {action.branch ? (
+                    <Tooltip content={branchText(action.branch)}>
+                      <Token
+                        label={`from #${action.branch.fromId}`}
+                        size="sm"
+                        color="orange"
+                        icon={<Icon icon={GitBranch} size="xsm" />}
+                        description={branchText(action.branch)}
+                      />
+                    </Tooltip>
+                  ) : null}
                 </HStack>
               }
               endContent={
@@ -629,6 +662,10 @@ function ChangeValues({ change }: { change: Change }) {
   )
 }
 
+function branchText(branch: { fromId: number; count: number }): string {
+  return `Recorded while viewing #${branch.fromId}, so the ${branch.count} action${branch.count === 1 ? '' : 's'} after it ${branch.count === 1 ? 'was' : 'were'} discarded.`
+}
+
 function badgeFor(kind: Change['kind']): 'success' | 'error' | 'warning' {
   return kind === 'added' ? 'success' : kind === 'removed' ? 'error' : 'warning'
 }
@@ -658,6 +695,11 @@ function ActionView({ action }: { action: ActionMeta }) {
           {new Date(action.ts).toISOString()}
         </Text>
       </MetadataListItem>
+      {action.branch ? (
+        <MetadataListItem label="Branch">
+          <Text>{branchText(action.branch)}</Text>
+        </MetadataListItem>
+      ) : null}
       <MetadataListItem label="Changes">
         <Text hasTabularNumbers>{action.changes ? String(action.changes.length) : 'Not recorded'}</Text>
       </MetadataListItem>

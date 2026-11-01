@@ -27,6 +27,20 @@ export interface Change {
 
 export type ActionSource = 'init' | 'app' | 'devtools'
 
+/** What an action cost. Timing and listener counts need the `inspector` middleware. */
+export interface ActionCost {
+  /** Time spent inside `set()`, including the store's synchronous listeners. */
+  durationMs?: number
+  /** Listeners notified by this `set()` (0 when the state object did not change). */
+  listeners?: number
+  /** Approximate size of the serialized state after the action, in characters. */
+  stateSize: number
+  /** `set()` produced a new state object but no value changed, so listeners ran for nothing. */
+  noop?: boolean
+  /** Top-level keys that received a new reference holding an equal value. */
+  sameValueKeys?: Array<string>
+}
+
 export interface ActionMeta {
   id: number
   name: string
@@ -37,6 +51,12 @@ export interface ActionMeta {
   changes?: Array<Change>
   /** True when the diff hit its size limit. */
   changesTruncated?: boolean
+  cost?: ActionCost
+  /**
+   * Set when this action happened while time travelling: the store branched
+   * from `fromId`, and the `count` later actions on the old branch were discarded.
+   */
+  branch?: { fromId: number; count: number }
 }
 
 export interface StoreInfo {

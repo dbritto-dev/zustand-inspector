@@ -80,6 +80,23 @@ describe('createPanelModel', () => {
     model.dispose()
   })
 
+  it('drops discarded actions when the page reports a branch', () => {
+    const { transport, store } = setup()
+    store.getState().inc()
+    store.getState().inc()
+    const model = createPanelModel(transport)
+    const [init, first] = model.store.getState().stores.counter.actions
+    model.selectAction(model.store.getState().stores.counter.actions[2].id)
+    model.command({ type: 'jump', toId: first.id })
+    store.getState().inc()
+    const data = model.store.getState().stores.counter
+    expect(data.actions.map((a) => a.id)).toEqual([init.id, first.id, data.currentId])
+    expect(data.actions.at(-1)!.branch).toEqual({ fromId: first.id, count: 1 })
+    // The selection pointed at a discarded action, so it falls back to following live.
+    expect(model.store.getState().selectedAction).toBeNull()
+    model.dispose()
+  })
+
   it('drops a removed store and ignores other sessions', () => {
     const { transport } = setup()
     const model = createPanelModel(transport)

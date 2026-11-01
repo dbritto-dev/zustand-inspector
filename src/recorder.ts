@@ -129,7 +129,12 @@ export class StoreRecorder<T> {
       this.#dirtyWhilePaused = true
       return
     }
+    // A change while time travelling branches the history: the actions after the
+    // state being viewed never led here, so they are discarded (undo/redo
+    // semantics) and the new action records where it branched from.
+    const branch = this.#discardFuture()
     const entry = this.#push(name, payload, source, this.#target.getState())
+    if (branch) entry.meta.branch = branch
     this.#send('action', {
       ...envelope(),
       storeId: this.storeId,
@@ -138,6 +143,14 @@ export class StoreRecorder<T> {
       currentId: this.#currentId,
       dropped: this.#dropped,
     })
+  }
+
+  /** Drop the entries after the current one; returns what was dropped, if anything. */
+  #discardFuture(): { fromId: number; count: number } | undefined {
+    const index = this.#history.findIndex((e) => e.meta.id === this.#currentId)
+    if (index === -1 || index === this.#history.length - 1) return undefined
+    const removed = this.#history.splice(index + 1)
+    return { fromId: this.#currentId, count: removed.length }
   }
 
   handle(command: Command): void {
