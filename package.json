@@ -1,6 +1,6 @@
 {
   "name": "zustand-inspector",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Zustand devtools for TanStack Devtools: lossless time travel, diffs, per-action cost, async calls and middleware views (persist, redux…). Framework-agnostic plugin plus a React adapter.",
   "type": "module",
   "license": "MIT",
