@@ -10,9 +10,11 @@ import {
   zustandInspectorDevtoolsPluginLive,
 } from './devtools/core'
 
-// Inline (not a function call) so the consumer's bundler folds it and drops the
-// live plugin, with its lazily loaded panel, from production builds.
-const DEVELOPMENT = typeof process !== 'undefined' && process.env.NODE_ENV === 'development'
+// Inline and unguarded, as TanStack's own plugins do: the consumer's bundler
+// replaces `process.env.NODE_ENV`, folds this, and drops the live plugin (with
+// its lazily loaded panel) from production builds. A `typeof process` guard
+// would defeat that: bundlers replace the property, not `process` itself.
+const DEVELOPMENT = process.env.NODE_ENV === 'development'
 
 export const ZustandInspectorDevtoolsCore = DEVELOPMENT
   ? ZustandInspectorDevtoolsCoreLive

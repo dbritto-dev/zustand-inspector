@@ -233,13 +233,27 @@ The entry for TanStack Devtools' [plugin registry](https://tanstack.com/devtools
 
 ## Development
 
+Uses [pnpm](https://pnpm.io) (the version is pinned in `package.json`'s `packageManager`; `corepack enable` picks it up).
+
 ```bash
-npm install
-npm run dev              # the playground (vanilla TanStackDevtoolsCore) at http://localhost:5173
-npm run dev:react        # the React example (@tanstack/react-devtools)
-npm test                 # vitest
-npm run typecheck
-npm run build            # dist/ (ESM) + dist/types
-npm run build:examples   # dist-examples/vanilla and dist-examples/react as static pages
-npm run astryx -- doctor --built src/astryx   # Astryx usage check for the panel
+pnpm install
+pnpm dev                 # the playground (vanilla TanStackDevtoolsCore) at http://localhost:5173
+pnpm dev:react           # the React example (@tanstack/react-devtools)
+pnpm test                # vitest
+pnpm typecheck
+pnpm build               # dist/ (ESM) + dist/types
+pnpm build:examples      # dist-examples/vanilla and dist-examples/react as static pages
+pnpm astryx doctor --built src/astryx   # Astryx usage check for the panel
 ```
+
+CI (`.github/workflows/ci.yml`) runs the typecheck, the tests, both builds and the Astryx check on every PR and push to `main`.
+
+## Releasing
+
+Releases use [Changesets](https://github.com/changesets/changesets) and publish to npm from GitHub Actions with [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC, no stored npm token, with provenance):
+
+1. With a change that should ship, run `pnpm changeset`, pick the bump and describe the change. Commit the generated file.
+2. When it lands on `main`, `.github/workflows/release.yml` opens or updates a "chore: version packages" PR that bumps the version and writes `CHANGELOG.md`.
+3. Merging that PR publishes the new version to npm, tags it and creates a GitHub release.
+
+One-time setup: on npmjs.com, the package's *Settings → Trusted publishing* names the repository `dbritto-dev/zustand-inspector` and the workflow `release.yml`; on GitHub, *Settings → Actions → General* allows GitHub Actions to create pull requests.

@@ -67,11 +67,16 @@ export function createZustandInspectorDevtoolsCore(
       mounted.set(el, entry)
       const options: ZustandInspectorDevtoolsInit = { ...init }
       for (const key of INIT_KEYS) if (props[key] !== undefined) (options as Record<string, unknown>)[key] = props[key]
-      void loadPanel().then(({ mountAstryxInspector }) => {
-        if (entry.closed) return
-        if (!el.style.height) el.style.height = '100%'
-        entry.handle = mountAstryxInspector(el, { ...options, mode: entry.mode })
-      })
+      loadPanel()
+        .then(({ mountAstryxInspector }) => {
+          if (entry.closed) return
+          if (!el.style.height) el.style.height = '100%'
+          entry.handle = mountAstryxInspector(el, { ...options, mode: entry.mode })
+        })
+        .catch((error: unknown) => {
+          // Devtools must never break the app; say why the panel is missing.
+          if (typeof console !== 'undefined') console.error('[zustand-inspector] the panel failed to load', error)
+        })
     }
 
     unmount(): void {

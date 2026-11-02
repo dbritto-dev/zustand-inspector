@@ -1,7 +1,7 @@
 {
   "name": "zustand-inspector",
   "version": "0.1.0",
-  "description": "Zustand devtools for TanStack Devtools: lossless time travel, diffs, per-action cost, async calls and middleware views (persist, redux\u2026). Framework-agnostic plugin plus a React adapter.",
+  "description": "Zustand devtools for TanStack Devtools: lossless time travel, diffs, per-action cost, async calls and middleware views (persist, redux…). Framework-agnostic plugin plus a React adapter.",
   "type": "module",
   "license": "MIT",
   "author": "Danilo Britto (https://github.com/dbritto-dev)",
@@ -60,21 +60,23 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p .",
-    "astryx": "node node_modules/@astryxdesign/cli/clients/cli/bin/astryx.mjs"
+    "astryx": "node node_modules/@astryxdesign/cli/clients/cli/bin/astryx.mjs",
+    "changeset": "changeset",
+    "release": "pnpm build && changeset publish"
   },
   "dependencies": {
-    "@tanstack/devtools-event-client": "^0.5.1",
-    "@tanstack/devtools-utils": "^0.7.2",
     "@astryxdesign/core": "^0.7.5",
     "@astryxdesign/theme-neutral": "^0.7.5",
     "@stylexjs/stylex": "^0.19.1",
+    "@tanstack/devtools-event-client": "^0.5.1",
+    "@tanstack/devtools-utils": "^0.7.2",
     "lucide-react": "^1.66.0"
   },
   "peerDependencies": {
+    "@tanstack/devtools": ">=0.16.0 <0.17.0",
     "react": ">=19.0.0",
     "react-dom": ">=19.0.0",
-    "zustand": ">=5.0.0",
-    "@tanstack/devtools": ">=0.16.0 <0.17.0"
+    "zustand": ">=5.0.0"
   },
   "peerDependenciesMeta": {
     "@tanstack/devtools": {
@@ -83,6 +85,7 @@
   },
   "devDependencies": {
     "@astryxdesign/cli": "^0.7.5",
+    "@changesets/cli": "^3.0.3",
     "@tanstack/devtools": "^0.16.0",
     "@tanstack/react-devtools": "^0.10.14",
     "@types/node": "^26.6.6",
@@ -96,5 +99,13 @@
     "vite": "^8.3.5",
     "vitest": "^5.0.5",
     "zustand": "^5.0.16"
+  },
+  "packageManager": "pnpm@12.16.1",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
