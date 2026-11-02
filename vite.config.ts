@@ -27,6 +27,12 @@ export default defineConfig(({ command, mode }) => {
         formats: ['es'],
       },
       rolldownOptions: {
+        // The React entries start with 'use client' and are their own entry
+        // chunks, so the directive is kept (checked in dist/react/*.js).
+        onwarn(warning, warn) {
+          if (warning.code === 'MODULE_LEVEL_DIRECTIVE' && warning.message.includes('use client')) return
+          warn(warning)
+        },
         // Dependencies and peers stay external; Astryx stylesheets imported with
         // ?inline are bundled as strings.
         external: (id) =>

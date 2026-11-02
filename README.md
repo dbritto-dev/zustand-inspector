@@ -256,4 +256,7 @@ Releases use [Changesets](https://github.com/changesets/changesets) and publish 
 2. When it lands on `main`, `.github/workflows/release.yml` opens or updates a "chore: version packages" PR that bumps the version and writes `CHANGELOG.md`.
 3. Merging that PR publishes the new version to npm, tags it and creates a GitHub release.
 
-One-time setup: on npmjs.com, the package's *Settings → Trusted publishing* names the repository `dbritto-dev/zustand-inspector` and the workflow `release.yml`; on GitHub, *Settings → Actions → General* allows GitHub Actions to create pull requests.
+One-time setup:
+- npm only lets you configure trusted publishing for a package that already exists, so the first version is published by hand: `pnpm build && pnpm publish --no-provenance` (provenance can only be generated in CI).
+- Then, on npmjs.com, the package's *Settings → Trusted publishing* names the repository `dbritto-dev/zustand-inspector` and the workflow `release.yml`.
+- On GitHub, *Settings → Actions → General* allows GitHub Actions to create pull requests.
