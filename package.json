@@ -5,6 +5,14 @@
   "type": "module",
   "license": "MIT",
   "author": "Danilo Britto (https://github.com/dbritto-dev)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dbritto-dev/zustand-inspector.git"
+  },
+  "homepage": "https://github.com/dbritto-dev/zustand-inspector#readme",
+  "bugs": {
+    "url": "https://github.com/dbritto-dev/zustand-inspector/issues"
+  },
   "keywords": [
     "zustand",
     "devtools",

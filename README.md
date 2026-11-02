@@ -223,6 +223,8 @@ The entry for TanStack Devtools' [plugin registry](https://tanstack.com/devtools
   requires: { packageName: 'zustand', minVersion: '5.0.0' },
   pluginImport: { importName: 'zustandInspectorDevtoolsPlugin', type: 'function' },
   pluginId: 'zustand-inspector',
+  docsUrl: 'https://github.com/dbritto-dev/zustand-inspector#readme',
+  repoUrl: 'https://github.com/dbritto-dev/zustand-inspector',
   author: 'Danilo Britto',
   framework: 'other',
   tags: ['Zustand', 'state management', 'time travel'],
