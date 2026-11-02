@@ -115,7 +115,14 @@ export interface ZustandInspectorDevtoolsPlugin {
   id: string
   name: string
   defaultOpen?: boolean
-  render(el: HTMLElement, props: ZustandInspectorDevtoolsProps): void
+  /**
+   * Mounts the panel into `el` and returns nothing. The return type is `any` so
+   * the same plugin also fits the React, Preact and Solid adapters, whose
+   * `render` is typed to return their own element: they render what this
+   * returns (nothing), and the panel is already in `el`.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  render(el: HTMLElement, props: ZustandInspectorDevtoolsProps): any
   destroy(): void
 }
 
