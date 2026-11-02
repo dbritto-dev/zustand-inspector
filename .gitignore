@@ -4,4 +4,4 @@ dist-demo
 shots
 *.log
 .DS_Store
-dist-showcase
+dist-examples

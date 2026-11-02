@@ -1,6 +1,0 @@
-export { zustandInspectorAstryxPlugin } from './plugin'
-export type { ZustandInspectorAstryxPluginOptions } from './plugin'
-export { mountAstryxInspector } from './mount'
-export type { AstryxInspectorHandle, AstryxInspectorOptions, ColorMode } from './mount'
-export { createPanelModel } from '../model'
-export type { PanelModel, PanelState, PanelStoreData, PanelTab } from '../model'

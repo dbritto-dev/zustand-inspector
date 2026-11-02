@@ -1,4 +1,5 @@
 import type { StateCreator, StoreApi, StoreMutatorIdentifier } from 'zustand/vanilla'
+import { devtoolsEnabled } from './env'
 import { builtInIntegrations, type InspectorIntegration } from './integrations'
 import { IntegrationRuntime } from './integrations/runtime'
 import { StoreRecorder, type RecorderOptions } from './recorder'
@@ -50,7 +51,10 @@ declare module 'zustand/vanilla' {
 }
 
 export interface InspectorOptions extends RecorderOptions {
-  /** Defaults to `false` in production builds. */
+  /**
+   * Record this store. Defaults to on in development (`process.env.NODE_ENV ===
+   * 'development'`) and off otherwise; `zustand-inspector/production` turns it on.
+   */
   enabled?: boolean
   /** Name used when `set` is called without an action and no caller name can be inferred. */
   anonymousActionType?: string
@@ -74,21 +78,8 @@ type Inspector = <
   options: InspectorOptions,
 ) => StateCreator<T, Mps, [['zustand-inspector', never], ...Mcs], U>
 
-/**
- * Uses `process.env.NODE_ENV` on purpose: the consumer's bundler replaces it
- * literally (same signal TanStack's EventClient uses), while `import.meta.env`
- * would be frozen into this package's own build output.
- */
 function now(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now()
-}
-
-export function isProduction(): boolean {
-  try {
-    return process.env.NODE_ENV === 'production'
-  } catch {
-    return false
-  }
 }
 
 const IGNORED_CALLERS = new Set([
@@ -155,7 +146,7 @@ function resolveAction(
 const inspectorImpl =
   (fn: StateCreator<any, [], []>, options: InspectorOptions) =>
   (set: StoreApi<any>['setState'], get: StoreApi<any>['getState'], api: StoreApi<any>) => {
-    if (options.enabled === false || (options.enabled === undefined && isProduction())) {
+    if (!(options.enabled ?? devtoolsEnabled())) {
       return fn(set, get, api)
     }
 
@@ -260,7 +251,7 @@ export function inspectStore<T>(
   store: StoreApi<T>,
   options: Omit<InspectorOptions, 'inferActionName'>,
 ): () => void {
-  if (options.enabled === false || (options.enabled === undefined && isProduction())) {
+  if (!(options.enabled ?? devtoolsEnabled())) {
     return () => {}
   }
   const recorder = new StoreRecorder<T>(

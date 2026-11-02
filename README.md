@@ -1,18 +1,29 @@
 # zustand-inspector
 
-Framework-agnostic devtools for [Zustand](https://github.com/pmndrs/zustand), built on the **vanilla core of [TanStack Devtools](https://tanstack.com/devtools)**. No React required: it works with `zustand/vanilla` stores and renders with plain DOM.
+Devtools for [Zustand](https://github.com/pmndrs/zustand), as a plugin for [TanStack Devtools](https://tanstack.com/devtools). It follows TanStack's [plugin guides](https://tanstack.com/devtools/latest/docs/building-custom-plugins): an `EventClient` between the stores and the panel, a framework-agnostic core with a React adapter built the `@tanstack/devtools-utils` way, and no-op exports outside development.
 
 - **Lossless time travel.** The page keeps the original state objects and the panel jumps by action id. Map, Set, Date, class instances and the store's own actions all survive a jump.
 - **Action log** with names from `set(partial, replace, action)`, payloads from `{ type, ...payload }`, and caller-name inference when no name is given.
-- **Structural diffs per action**, including per-entry Map and Set changes.
+- **Structural diffs per action**, including per-entry Map and Set changes, and diffs between any two states.
 - **Redaction in the page**, before anything is sent. Keys ending in `token`, `password`, `secret`, `apiKey`, `cookie` and similar are redacted by default.
-- **Pause and resume, commit, reset, export and import**, plus a scrubber with back to start, previous, next and back to latest, and keyboard navigation (↑ ↓ Enter Esc).
+- **Pause and resume, commit, reset, export and import**, plus a scrubber with back to start, previous, next and back to latest.
 - **Late-mount safe.** Open the panel whenever you like and it syncs the full history.
-- **Production-safe.** It becomes a no-op when `process.env.NODE_ENV === 'production'`.
+- **Development only by default**, like TanStack's own plugins (see [Production](#production)).
 
 > Status: prototype (0.1.0). TanStack Devtools is still alpha (0.x), so the peer range is pinned to `0.16.x`.
 
+## Install
+
+```bash
+npm i zustand-inspector
+npm i -D @tanstack/devtools          # or @tanstack/react-devtools for React
+```
+
+The panel renders with React 19 and [Astryx](https://astryx.atmeta.com), Meta's design system, inside a shadow root, so neither its styles nor your app's can reach the other side. `react` and `react-dom` are peer dependencies (npm and pnpm install them for you); the app itself doesn't need to use React.
+
 ## Usage
+
+### 1. Record your stores
 
 ```ts
 import { createStore } from 'zustand/vanilla'
@@ -32,46 +43,53 @@ export const counter = createStore<State>()(
 )
 ```
 
-Mount the devtools in development only, so neither the shell nor the panel reaches production bundles:
+For a store you can't wrap (a third-party one, say), `inspectStore(store, { name })` records every change as `setState` and still supports time travel.
+
+### 2. Add the plugin
+
+**Any framework, or none**, with the framework-independent host:
 
 ```ts
-if (import.meta.env.DEV) {
-  const [{ TanStackDevtoolsCore }, { zustandInspectorPlugin }] = await Promise.all([
-    import('@tanstack/devtools'),
-    import('zustand-inspector/panel'),
-  ])
-  const host = document.body.appendChild(document.createElement('div'))
-  new TanStackDevtoolsCore({ plugins: [zustandInspectorPlugin()] }).mount(host)
-}
+import { TanStackDevtoolsCore } from '@tanstack/devtools'
+import { zustandInspectorDevtoolsPlugin } from 'zustand-inspector'
+
+new TanStackDevtoolsCore({ plugins: [zustandInspectorDevtoolsPlugin()] }).mount(container)
 ```
 
-If you already use a framework adapter such as `@tanstack/react-devtools`, pass the same plugin object to its `plugins` array.
+**React**, with `@tanstack/react-devtools`:
 
-### Astryx panel
+```tsx
+import { TanStackDevtools } from '@tanstack/react-devtools'
+import { zustandInspectorDevtoolsPlugin } from 'zustand-inspector/react'
 
-`zustand-inspector/astryx` is the same plugin with a UI built from [Astryx](https://astryx.atmeta.com), Meta's design system. Your stores stay plain Zustand: React and Astryx only run inside the devtools pane, in a shadow root, so neither Astryx's reset nor your app's CSS can reach the other side.
-
-```bash
-npm i -D react react-dom @astryxdesign/core @astryxdesign/theme-neutral @stylexjs/stylex lucide-react
+<TanStackDevtools plugins={[zustandInspectorDevtoolsPlugin()]} />
 ```
 
-```ts
-const { zustandInspectorAstryxPlugin } = await import('zustand-inspector/astryx')
-new TanStackDevtoolsCore({ plugins: [zustandInspectorAstryxPlugin()] }).mount(host)
-```
+`ZustandInspectorDevtoolsPanel` (from `zustand-inspector/react`) is the same panel as a component, for a custom plugin entry or your own layout. `ZustandInspectorDevtoolsCore` (from `zustand-inspector`) is the core class (`mount(el, props)` / `unmount()`) that adapters for other frameworks can wrap with `@tanstack/devtools-utils` (`createSolidPanel`, `createVuePanel`…).
 
-Options:
-- `astryxTheme: { theme, css }` takes any built Astryx theme so the devtools match your app.
-- `loadFonts: true` loads the theme's web font from Google Fonts at page level.
+The panel is loaded with a dynamic `import()` the first time it mounts, so store code that only imports `inspector` never pulls in React or Astryx.
 
-What it adds over the plain panel:
-- a resizable action list whose width is remembered;
-- an import dialog with a drop zone;
-- below 720px the detail opens in a drawer.
+### Options
 
-Two build notes:
+`zustandInspectorDevtoolsPlugin(options)` (framework-agnostic) and `ZustandInspectorDevtoolsPanel` props take:
+- `astryxTheme: { theme, css }`: any built Astryx theme, so the devtools match your app.
+- `loadFonts: true`: load the theme's web font from Google Fonts at page level.
+- `asyncConvention`: how async calls are read from action names (see [Async calls](#who-changed-this-and-what-did-it-cost)), or `false`.
+- `name`, `id`, `defaultOpen` (plugin only): the tab title (default "Zustand"), the plugin id (default `zustand-inspector`) and whether it opens first.
+
+### Production
+
+As in TanStack's guides, the plain imports are on only when `process.env.NODE_ENV === 'development'`:
+- `inspector` and `inspectStore` don't record;
+- `zustandInspectorDevtoolsPlugin` and `ZustandInspectorDevtoolsCore` (and the React exports) are no-ops, and your bundler drops the panel.
+
+To keep the devtools in a production build (a staging build, say), import from `zustand-inspector/production` and `zustand-inspector/react/production` instead. These always record, and use the always-on client from `@tanstack/devtools-event-client/production`.
+
+### Build notes
+
 - **CSS target.** Astryx colors rely on CSS `light-dark()`, so a bundler's `build.cssTarget` must be at least Chrome 123 / Safari 17.5 / Firefox 120. Older targets rewrite every theme color into a fallback that only works in dark mode.
 - **Root sync.** Astryx's `<Theme>` normally writes `data-theme` onto your `<html>`. The panel uses its own theme root, so your page is never touched.
+- **React StrictMode.** `@tanstack/devtools-utils`' `createReactPanel` misses prop changes under React 19's StrictMode (its ref is detached before the simulated unmount, so later effects return early), so the panel never sees a theme change. `zustand-inspector/react` uses its own panel component with the same contract instead, and still builds the plugin with `createReactPlugin`.
 
 ### Who changed this, and what did it cost?
 
@@ -139,14 +157,7 @@ These are built on an integration API (`InspectorIntegration`, experimental) tha
 
 Name inference skips frames from `node_modules` and Vite's prebundled deps, which is what dev servers serve, and wrappers named `setState`. In a build that bundles Zustand into the same file as your code, pass action names explicitly when using `persist`.
 
-For a store you can't wrap (for example a third-party one), use `inspectStore`. It records every change as `setState` and still supports time travel:
-
-```ts
-import { inspectStore } from 'zustand-inspector'
-const stop = inspectStore(someStore, { name: 'theme' })
-```
-
-To host the panel outside TanStack (a plain `<div>`, an extension page, a Vite DevTools dock), use `mountInspector(el, { transport })` from `zustand-inspector/panel`.
+To host a panel outside TanStack (a plain `<div>`, an extension page, a Vite DevTools dock), mount the core yourself: `new ZustandInspectorDevtoolsCore().mount(el, { theme: 'dark' })`. `zustand-inspector/plain` also has a smaller panel in plain DOM, with no React: `mountInspector(el, { transport })`.
 
 ## Options
 
@@ -158,7 +169,7 @@ To host the panel outside TanStack (a plain `<div>`, an extension page, a Vite D
 | `sanitize` | none | `(state) => unknown` to hide or reshape state before it is serialized. |
 | `maxDepth` / `maxItems` | `12` / `500` | Serialization limits. |
 | `diff` | `true` | Compute per-action structural diffs. |
-| `enabled` | not production | Force recording on or off. |
+| `enabled` | development only | Force recording on or off (`zustand-inspector/production` defaults to on). |
 | `inferActionName` | `true` | Infer the action name from the calling function's name. |
 | `anonymousActionType` | `'anonymous'` | Name used when nothing else is known. |
 | `transport` | TanStack bus | Any object implementing `Transport`. |
@@ -167,20 +178,20 @@ To host the panel outside TanStack (a plain `<div>`, an extension page, a Vite D
 ## How it works
 
 ```
- page                                              panel (TanStack plugin / any host)
- ┌──────────────────────────────┐   transport     ┌──────────────────────────────┐
- │ inspector middleware          │  (versioned,    │ PanelView (vanilla DOM)       │
- │  └ StoreRecorder              │   JSON-safe,    │  timeline · state · diff      │
- │     ring buffer of ORIGINAL   │◀─ commands ─────│  scrubber · export/import     │
- │     states, ids, diffs        │── events ──────▶│                               │
+ page                                              devtools (any TanStack host)
+ ┌──────────────────────────────┐ EventClient     ┌──────────────────────────────┐
+ │ inspector middleware          │ 'zustand-       │ ZustandInspectorDevtoolsCore  │
+ │  └ StoreRecorder              │  inspector:*'   │  └ panel (React + Astryx,     │
+ │     ring buffer of ORIGINAL   │◀─ commands ─────│     shadow root, lazy-loaded) │
+ │     states, ids, diffs        │── events ──────▶│  plugin · React adapter       │
  └──────────────────────────────┘   by id         └──────────────────────────────┘
 ```
 
 - **The page owns the state.** The panel only receives serialized, redacted views. It never sends state back to time travel; it sends `{ type: 'jump', toId }`, and the page restores the exact object it recorded. `import` is the only command that carries state. It is rebuilt on top of the live state, so actions and redacted secrets keep their live values, and it is logged as `devtools/import`.
 - **Versioned envelope.** Every message carries `{ v, session }`. The TanStack bus mirrors events to other tabs over BroadcastChannel, so the session id stops a panel in one tab from jumping stores in another.
-- **Swappable transport.** The recorder and panel depend only on `Transport { send, on, reconnect? }`. Two are included: the TanStack EventClient (default) and an in-memory one. A `postMessage`, WebSocket or Rozenite transport can be added without touching either side.
+- **Swappable transport.** The recorder and panel depend only on `Transport { send, on, reconnect? }`. Two are included: the `ZustandInspectorEventClient` (an `EventClient` subclass, plugin id `zustand-inspector`, suffix-only event names) and an in-memory one. A `postMessage`, WebSocket or Rozenite transport can be added without touching either side.
 - **TanStack quirks it handles:**
-  - `render(el, props)` runs again on every theme or open change, so the plugin keeps one view per container.
+  - `render(el, props)` runs again on every theme or open change, and adapters unmount and mount again on every prop change, so the core keeps one panel per container and only switches its theme.
   - The EventClient stops emitting for good if the bus isn't mounted within about 1.5 s, so the panel reopens the shared emitter when it mounts.
   - Reopening from inside an event handler would re-enter the client's queue flush, so it never does that.
 
@@ -200,13 +211,33 @@ Ideas borrowed (see the research report):
 - State editing from the panel, a "why did this subscriber run" view, and go-to-source for actions (from the stack trace) aren't built yet.
 - Other hosts: a Redux DevTools adapter (so existing users keep their workflow), a WXT browser extension, Rozenite (React Native), and command endpoints that MCP-based coding agents can call.
 
+## Marketplace
+
+The entry for TanStack Devtools' [plugin registry](https://tanstack.com/devtools/latest/docs/third-party-plugins) (`packages/devtools/src/tabs/plugin-registry.ts`), once the package is on npm. The root plugin works in every host, so one entry covers all frameworks:
+
+```ts
+'zustand-inspector': {
+  packageName: 'zustand-inspector',
+  title: 'Zustand Inspector',
+  description: 'Time travel, diffs, per-action cost, async calls and middleware views (persist, redux…) for Zustand stores.',
+  requires: { packageName: 'zustand', minVersion: '5.0.0' },
+  pluginImport: { importName: 'zustandInspectorDevtoolsPlugin', type: 'function' },
+  pluginId: 'zustand-inspector',
+  author: 'Danilo Britto',
+  framework: 'other',
+  tags: ['Zustand', 'state management', 'time travel'],
+},
+```
+
 ## Development
 
 ```bash
 npm install
-npm run dev          # demo at http://localhost:5173 (?devtoolsDelay=3000 to test late mount)
-npm test             # vitest: recorder, panel model, plain panel (jsdom)
-npm run astryx -- doctor --built src/astryx   # Astryx usage check for the Astryx panel
+npm run dev              # the playground (vanilla TanStackDevtoolsCore) at http://localhost:5173
+npm run dev:react        # the React example (@tanstack/react-devtools)
+npm test                 # vitest
 npm run typecheck
-npm run build        # dist/ (ESM) + dist/types
+npm run build            # dist/ (ESM) + dist/types
+npm run build:examples   # dist-examples/vanilla and dist-examples/react as static pages
+npm run astryx -- doctor --built src/astryx   # Astryx usage check for the panel
 ```

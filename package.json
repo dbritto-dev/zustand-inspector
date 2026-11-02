@@ -1,7 +1,7 @@
 {
   "name": "zustand-inspector",
   "version": "0.1.0",
-  "description": "Framework-agnostic Zustand devtools for TanStack Devtools: lossless time travel, action log, diffs, redaction. Apps need no React; an optional panel is built with Meta's Astryx.",
+  "description": "Zustand devtools for TanStack Devtools: lossless time travel, diffs, per-action cost, async calls and middleware views (persist, redux\u2026). Framework-agnostic plugin plus a React adapter.",
   "type": "module",
   "license": "MIT",
   "author": "Danilo Britto (https://github.com/dbritto-dev)",
@@ -10,87 +10,78 @@
     "devtools",
     "tanstack",
     "tanstack-devtools",
+    "tanstack-devtools-plugin",
     "time-travel",
-    "state-management",
-    "vanilla"
+    "state-management"
   ],
   "sideEffects": false,
   "files": [
     "dist",
-    "src"
+    "src",
+    "LICENSE",
+    "README.md"
   ],
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./panel": {
-      "types": "./dist/types/panel/index.d.ts",
-      "import": "./dist/panel.js"
+    "./production": {
+      "types": "./dist/types/production.d.ts",
+      "import": "./dist/production.js"
     },
-    "./astryx": {
-      "types": "./dist/types/astryx/index.d.ts",
-      "import": "./dist/astryx.js"
+    "./react": {
+      "types": "./dist/types/react/index.d.ts",
+      "import": "./dist/react/index.js"
+    },
+    "./react/production": {
+      "types": "./dist/types/react/production.d.ts",
+      "import": "./dist/react/production.js"
+    },
+    "./plain": {
+      "types": "./dist/types/panel/index.d.ts",
+      "import": "./dist/plain.js"
     },
     "./package.json": "./package.json"
   },
   "scripts": {
     "dev": "vite",
+    "dev:react": "vite --mode react",
     "build": "vite build && tsc -p tsconfig.build.json",
-    "build:demo": "vite build --mode demo",
+    "build:examples": "vite build -c vite.examples.config.ts --mode vanilla && vite build -c vite.examples.config.ts --mode react",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p .",
     "astryx": "node node_modules/@astryxdesign/cli/clients/cli/bin/astryx.mjs"
   },
   "dependencies": {
-    "@tanstack/devtools-event-client": "^0.5.1"
+    "@tanstack/devtools-event-client": "^0.5.1",
+    "@tanstack/devtools-utils": "^0.7.2",
+    "@astryxdesign/core": "^0.7.5",
+    "@astryxdesign/theme-neutral": "^0.7.5",
+    "@stylexjs/stylex": "^0.19.1",
+    "lucide-react": "^1.66.0"
   },
   "peerDependencies": {
-    "@astryxdesign/core": ">=0.7.5 <0.8.0",
-    "@astryxdesign/theme-neutral": ">=0.7.5 <0.8.0",
-    "@stylexjs/stylex": "^0.19.0",
-    "@tanstack/devtools": ">=0.16.0 <0.17.0",
-    "lucide-react": ">=1.0.0",
     "react": ">=19.0.0",
     "react-dom": ">=19.0.0",
-    "zustand": ">=5.0.0"
+    "zustand": ">=5.0.0",
+    "@tanstack/devtools": ">=0.16.0 <0.17.0"
   },
   "peerDependenciesMeta": {
     "@tanstack/devtools": {
-      "optional": true
-    },
-    "react": {
-      "optional": true
-    },
-    "react-dom": {
-      "optional": true
-    },
-    "@astryxdesign/core": {
-      "optional": true
-    },
-    "@astryxdesign/theme-neutral": {
-      "optional": true
-    },
-    "@stylexjs/stylex": {
-      "optional": true
-    },
-    "lucide-react": {
       "optional": true
     }
   },
   "devDependencies": {
     "@astryxdesign/cli": "^0.7.5",
-    "@astryxdesign/core": "^0.7.5",
-    "@astryxdesign/theme-neutral": "^0.7.5",
-    "@stylexjs/stylex": "^0.19.1",
     "@tanstack/devtools": "^0.16.0",
+    "@tanstack/react-devtools": "^0.10.14",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "immer": "^11.2.9",
     "jsdom": "^30.1.3",
-    "lucide-react": "^1.66.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "typescript": "^7.0.2",

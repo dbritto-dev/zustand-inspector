@@ -1,5 +1,5 @@
-import { EventClient } from '@tanstack/devtools-event-client'
-import { PLUGIN_ID, type InspectorEvents, type InspectorEventName } from './protocol'
+import { ZustandInspectorEventClient, type EventClientClass } from './client'
+import type { InspectorEvents, InspectorEventName } from './protocol'
 import { globals } from './session'
 
 /**
@@ -23,14 +23,21 @@ export interface Transport {
 
 export interface EventClientTransportOptions {
   debug?: boolean
+  /** The EventClient class to use. Defaults to the page's (see `useEventClient`). */
+  client?: EventClientClass
+}
+
+/** Make the page's default transport use this EventClient class (the `/production` entries do). */
+export function useEventClient(client: EventClientClass): void {
+  globals().eventClient = client
 }
 
 /** Transport over the TanStack Devtools event bus (in-page, plus the Vite server bus if enabled). */
 export function createEventClientTransport(
   options: EventClientTransportOptions = {},
 ): Transport {
-  const make = () =>
-    new EventClient<InspectorEvents>({ pluginId: PLUGIN_ID, debug: options.debug ?? false })
+  const Client = options.client ?? (globals().eventClient as EventClientClass | undefined) ?? ZustandInspectorEventClient
+  const make = () => new Client({ debug: options.debug ?? false })
   // `on` subscribes directly on the global event target and keeps working even
   // when emitting has given up, so one listening client is enough.
   const listener = make()
